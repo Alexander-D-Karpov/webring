@@ -3,11 +3,14 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"html/template"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"webring"
 
 	"webring/internal/api"
 	"webring/internal/dashboard"
@@ -81,7 +84,20 @@ func main() {
 	dashboard.RegisterHandlers(r, db)
 
 	// Serve static files
-	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	staticFiles, err := fs.Sub(webring.Files, "static")
+	if err != nil {
+		log.Fatalf("Error accessing static files: %v", err)
+	}
+	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.FS(staticFiles))))
+
+	// Parse templates
+	t, err := template.ParseFS(webring.Files, "internal/dashboard/templates/*.html")
+	if err != nil {
+		log.Fatalf("Error parsing templates: %v", err)
+	}
+
+	// Initialize dashboard templates
+	dashboard.InitTemplates(t)
 
 	port := os.Getenv("PORT")
 	if port == "" {

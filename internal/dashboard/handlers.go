@@ -8,16 +8,22 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 
 	"webring/internal/models"
 
 	"github.com/gorilla/mux"
 )
 
-var templates *template.Template
+var (
+	templates   *template.Template
+	templatesMu sync.RWMutex
+)
 
-func init() {
-	templates = template.Must(template.ParseGlob("internal/dashboard/templates/*.html"))
+func InitTemplates(t *template.Template) {
+	templatesMu.Lock()
+	defer templatesMu.Unlock()
+	templates = t
 }
 
 func RegisterHandlers(r *mux.Router, db *sql.DB) {
@@ -44,14 +50,26 @@ func basicAuthMiddleware(next http.Handler) http.Handler {
 
 func dashboardHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		templatesMu.RLock()
+		t := templates
+		templatesMu.RUnlock()
+
+		if t == nil {
+			log.Println("Templates not initialized")
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+
 		sites, err := getAllSites(db)
 		if err != nil {
+			log.Printf("Error fetching sites: %v", err)
 			http.Error(w, "Error fetching sites", http.StatusInternalServerError)
 			return
 		}
 
-		err = templates.ExecuteTemplate(w, "dashboard.html", sites)
+		err = t.ExecuteTemplate(w, "dashboard.html", sites)
 		if err != nil {
+			log.Printf("Error rendering template: %v", err)
 			http.Error(w, "Error rendering template", http.StatusInternalServerError)
 		}
 	}

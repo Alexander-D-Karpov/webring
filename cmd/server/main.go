@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -46,7 +47,6 @@ func main() {
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("Error loading .env file:", err)
-		// Continue execution, as we have default values
 	}
 
 	logFile, err := setupLogging()
@@ -85,6 +85,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
+		fmt.Println("PORT environment variable not set. Defaulting to 8080")
 		port = "8080"
 	}
 

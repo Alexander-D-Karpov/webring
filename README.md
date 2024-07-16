@@ -15,11 +15,31 @@ This project is a webring relay service built with Go. It manages a list of webs
 - PostgreSQL database
 
 ## Installation
+
+edit .env to set correct path to database
+
 ```
 go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 go mod tidy
+cp .env.template .env
 make migrate-up
 ```
+
+## Local Run
+
+```
+go run cmd/server/main.go
+```
+
+or download prebuild version
+
+```
+wget https://github.com/Alexander-D-Karpov/webring/releases/latest/download/webring
+chmod +x webring
+./webring
+```
+
+
 
 ## Usage
 

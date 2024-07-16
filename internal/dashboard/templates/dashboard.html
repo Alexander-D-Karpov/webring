@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webring Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header>
+    <h1>Webring Dashboard</h1>
+</header>
+<main>
+    <section id="add-site">
+        <h2>Add New Site</h2>
+        <form action="/dashboard/add" method="POST" class="inline-form">
+            <input type="number" name="id" placeholder="ID" required>
+            <input type="text" name="name" placeholder="Name" required>
+            <input type="url" name="url" placeholder="URL" required>
+            <button type="submit">Add Site</button>
+        </form>
+    </section>
+    <section id="site-list">
+        <h2>Site List</h2>
+        <table>
+            <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>URL</th>
+                <th>Status</th>
+                <th>Last Check</th>
+                <th>Actions</th>
+            </tr>
+            </thead>
+            <tbody>
+            {{range .}}
+            <tr>
+                <td>{{.ID}}</td>
+                <td>{{.Name}}</td>
+                <td>{{.URL}}</td>
+                <td>
+                    {{if .IsUp}}
+                    <span class="status up">Up</span>
+                    {{else}}
+                    <span class="status down">Down</span>
+                    {{end}}
+                </td>
+                <td>{{.LastCheck}}</td>
+                <td>
+                    <form action="/dashboard/update/{{.ID}}" method="POST" class="inline-form">
+                        <input type="text" name="name" value="{{.Name}}" required>
+                        <input type="url" name="url" value="{{.URL}}" required>
+                        <button type="submit">Update</button>
+                    </form>
+                    <form action="/dashboard/remove/{{.ID}}" method="POST" class="inline-form">
+                        <button type="submit">Remove</button>
+                    </form>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+    </section>
+</main>
+</body>
+</html>

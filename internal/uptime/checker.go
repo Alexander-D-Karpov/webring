@@ -22,6 +22,7 @@ func NewChecker(db *sql.DB) *Checker {
 }
 
 func (c *Checker) Start() {
+	fmt.Println("Starting checker...")
 	ticker := time.NewTicker(5 * time.Minute)
 	for range ticker.C {
 		c.checkAllSites()
@@ -52,7 +53,7 @@ func (c *Checker) checkAllSites() {
 
 func (c *Checker) checkSite(site models.Site) (bool, float64, string) {
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 10 * time.Second,
 	}
 
 	url := site.URL

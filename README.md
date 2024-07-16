@@ -25,8 +25,11 @@ make migrate-up
 
 - Access the dashboard at `http://localhost:8080/dashboard` (use the credentials set in your `.env` file)
 - API endpoints:
-  - Next site: `GET /site/{id}/next`
-  - Previous site: `GET /site/{id}/previous`
+  - Next site: `GET /{id}/next/`
+  - Previous site: `GET /{id}/prev/`
+  - Random site: `GET /{id}/random/`
+  - Full data for a site: `GET /{id}/data`
 - Redirect endpoints:
-    - Next site: `GET /site/{id}/next/`
-    - Previous site: `GET /site/{id}/previous/`
+    - Next site: `GET /{id}/next`
+    - Previous site: `GET /{id}/prev`
+    - Random site: `GET /{id}/random`

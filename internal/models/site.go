@@ -13,3 +13,9 @@ type PublicSite struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
 }
+
+type SiteData struct {
+	Prev PublicSite `json:"prev"`
+	Curr PublicSite `json:"curr"`
+	Next PublicSite `json:"next"`
+}

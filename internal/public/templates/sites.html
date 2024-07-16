@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webring Sites</title>
+    <link rel="stylesheet" href="/static/public.css">
+</head>
+<body>
+<header>
+    <h1>Webring Sites</h1>
+</header>
+<main>
+    <ul class="site-list">
+        {{range .}}
+        <li>
+            <img src="/media/{{.Favicon}}" alt="" width="16" height="16">
+            <a href="{{.URL}}" target="_blank">{{.Name}}</a>
+        </li>
+        {{end}}
+    </ul>
+</main>
+</body>
+</html>

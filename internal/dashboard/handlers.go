@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"webring/internal/favicon"
 
 	"webring/internal/models"
 
@@ -92,11 +93,31 @@ func addSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err = db.Exec("INSERT INTO sites (id, name, url) VALUES ($1, $2, $3)", id, name, url)
+		result, err := db.Exec("INSERT INTO sites (id, name, url) VALUES ($1, $2, $3)", id, name, url)
 		if err != nil {
 			http.Error(w, "Error adding site", http.StatusInternalServerError)
 			return
 		}
+		insertedID, _ := result.LastInsertId()
+
+		// Start a goroutine to fetch and store the favicon
+		go func() {
+			mediaFolder := os.Getenv("MEDIA_FOLDER")
+			if mediaFolder == "" {
+				mediaFolder = "media"
+			}
+
+			faviconPath, err := favicon.GetAndStoreFavicon(url, mediaFolder, int(insertedID))
+			if err != nil {
+				log.Printf("Error retrieving favicon for %s: %v", url, err)
+				return
+			}
+
+			_, err = db.Exec("UPDATE sites SET favicon = $1 WHERE id = $2", faviconPath, insertedID)
+			if err != nil {
+				log.Printf("Error updating favicon for site %d: %v", insertedID, err)
+			}
+		}()
 
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 	}
@@ -132,12 +153,31 @@ func updateSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		go func() {
+			mediaFolder := os.Getenv("MEDIA_FOLDER")
+			if mediaFolder == "" {
+				mediaFolder = "media"
+			}
+
+			siteId, _ := strconv.Atoi(id)
+			faviconPath, err := favicon.GetAndStoreFavicon(url, mediaFolder, siteId)
+			if err != nil {
+				log.Printf("Error retrieving favicon for %s: %v", url, err)
+				return
+			}
+
+			_, err = db.Exec("UPDATE sites SET favicon = $1 WHERE id = $2", faviconPath, id)
+			if err != nil {
+				log.Printf("Error updating favicon for site %d: %v", id, err)
+			}
+		}()
+
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 	}
 }
 
 func getAllSites(db *sql.DB) ([]models.Site, error) {
-	rows, err := db.Query("SELECT id, name, url, is_up, last_check FROM sites ORDER BY id")
+	rows, err := db.Query("SELECT id, name, url, is_up, last_check, favicon FROM sites ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +191,8 @@ func getAllSites(db *sql.DB) ([]models.Site, error) {
 	var sites []models.Site
 	for rows.Next() {
 		var site models.Site
-		if err := rows.Scan(&site.ID, &site.Name, &site.URL, &site.IsUp, &site.LastCheck); err != nil {
+		err := rows.Scan(&site.ID, &site.Name, &site.URL, &site.IsUp, &site.LastCheck, &site.Favicon)
+		if err != nil {
 			return nil, err
 		}
 		site.LastCheck = math.Round(site.LastCheck * 1000)

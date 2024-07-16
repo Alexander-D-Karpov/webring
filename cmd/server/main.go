@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"webring"
+	"webring/internal/public"
 
 	"webring/internal/api"
 	"webring/internal/dashboard"
@@ -91,13 +92,31 @@ func main() {
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.FS(staticFiles))))
 
 	// Parse templates
-	t, err := template.ParseFS(webring.Files, "internal/dashboard/templates/*.html")
+	t, err := template.ParseFS(webring.Files, "internal/dashboard/templates/*.html", "internal/public/templates/*.html")
 	if err != nil {
 		log.Fatalf("Error parsing templates: %v", err)
 	}
 
 	// Initialize dashboard templates
 	dashboard.InitTemplates(t)
+
+	// Initialize public templates
+	public.InitTemplates(t)
+
+	mediaFolder := os.Getenv("MEDIA_FOLDER")
+	if mediaFolder == "" {
+		mediaFolder = "media"
+	}
+	err = os.MkdirAll(mediaFolder, os.ModePerm)
+	if err != nil {
+		return
+	}
+
+	// Serve media files
+	r.PathPrefix("/media/").Handler(http.StripPrefix("/media/", http.FileServer(http.Dir(mediaFolder))))
+
+	// Register public handlers
+	public.RegisterHandlers(r, db)
 
 	port := os.Getenv("PORT")
 	if port == "" {

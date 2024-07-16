@@ -48,7 +48,10 @@
             {{range .}}
             <tr>
                 <td>{{.ID}}</td>
-                <td><input type="text" name="name" value="{{.Name}}" form="form-{{.ID}}" required></td>
+                <td>
+                    {{if .Favicon}}<img src="/media/{{.Favicon}}" alt="" width="16" height="16" style="margin-left: 0.5rem">{{end}}
+                    <input type="text" name="name" value="{{.Name}}" form="form-{{.ID}}" required>
+                </td>
                 <td>
                     <div class="cell">
                         <input type="url" name="url" value="{{.URL}}" form="form-{{.ID}}" required>

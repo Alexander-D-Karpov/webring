@@ -4,69 +4,85 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Webring Dashboard</title>
-    <link rel="stylesheet" href="/static/styles.css">
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <link rel="preconnect" href="https://rsms.me/">
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
 </head>
 <body>
 <header>
-    <h1>Webring Dashboard</h1>
+    <a href="/dashboard">
+        <h1>
+            <i class="ri-bubble-chart-fill"></i>
+            Webring Dashboard
+        </h1>
+    </a>
 </header>
 <main>
-    <section id="add-site">
-        <h2>Add New Site</h2>
-        <form action="/dashboard/add" method="POST" class="card">
-            <input type="number" name="id" placeholder="ID" required>
-            <input type="text" name="name" placeholder="Name" required>
-            <input type="url" name="url" placeholder="URL" required>
-            <button type="submit" class="btn btn-primary">Add Site</button>
-        </form>
-    </section>
-    <section id="site-list">
-        <h2>Site List</h2>
-        <div class="table-responsive">
-            <table>
-                <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Name</th>
-                    <th>URL</th>
-                    <th>Status</th>
-                    <th>Last Check</th>
-                    <th>Actions</th>
-                </tr>
-                </thead>
-                <tbody>
-                {{range .}}
-                <tr>
-                    <td>{{.ID}}</td>
-                    <td>{{.Name}}</td>
-                    <td><a href="{{.URL}}" target="_blank">{{.URL}}</a></td>
-                    <td>
-                        {{if .IsUp}}
-                        <span class="badge badge-success">Up</span>
-                        {{else}}
-                        <span class="badge badge-danger">Down</span>
-                        {{end}}
-                    </td>
-                    <td>{{.LastCheck}}</td>
-                    <td>
-                        <div class="action-forms">
-                            <form action="/dashboard/update/{{.ID}}" method="POST" class="inline-form update-form">
-                                <input type="text" name="name" value="{{.Name}}" required>
-                                <input type="url" name="url" value="{{.URL}}" required>
-                                <button type="submit" class="btn btn-secondary">Update</button>
-                            </form>
-                            <form action="/dashboard/remove/{{.ID}}" method="POST" class="inline-form remove-form">
-                                <button type="submit" class="btn btn-danger">Remove</button>
-                            </form>
-                        </div>
-                    </td>
-                </tr>
-                {{end}}
-                </tbody>
-            </table>
-        </div>
-    </section>
+    <div class="table-responsive">
+        <table>
+            <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>URL</th>
+                <th>Status</th>
+                <th>Ping</th>
+                <th>Actions</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr>
+                <td><input type="number" name="id" placeholder="ID" form="form-new" required></td>
+                <td><input type="text" name="name" placeholder="Name" form="form-new" required></td>
+                <td><input type="url" name="url" placeholder="URL" form="form-new" required></td>
+                <td></td>
+                <td></td>
+                <td>
+                    <button type="submit" form="form-new">
+                        <i class="ri-check-line"></i>
+                    </button>
+                    <form action="/dashboard/add" method="POST" style="display: none" id="form-new"></form>
+                </td>
+            </tr>
+            {{range .}}
+            <tr>
+                <td>{{.ID}}</td>
+                <td><input type="text" name="name" value="{{.Name}}" form="form-{{.ID}}" required></td>
+                <td>
+                    <div class="cell">
+                        <input type="url" name="url" value="{{.URL}}" form="form-{{.ID}}" required>
+                        <a href="{{.URL}}" target="_blank">
+                            <i class="ri-arrow-right-up-line"></i>
+                        </a>
+                    </div>
+                </td>
+                <td>
+                    {{if .IsUp}}
+                    <span class="badge badge-success">Up</span>
+                    {{else}}
+                    <span class="badge badge-danger">Down</span>
+                    {{end}}
+                </td>
+                <td>{{.LastCheck}}</td>
+                <td>
+                    <div class="cell">
+                        <button type="submit" form="form-{{.ID}}">
+                            <i class="ri-check-line"></i>
+                        </button>
+                        <form action="/dashboard/update/{{.ID}}" method="POST" id="form-{{.ID}}"></form>
+                        <form action="/dashboard/remove/{{.ID}}" method="POST" style="display: contents">
+                            <button type="submit">
+                                <i class="ri-delete-bin-line"></i>
+                            </button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+    </div>
 </main>
 </body>
 </html>

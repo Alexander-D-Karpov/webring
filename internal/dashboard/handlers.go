@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"html/template"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -135,6 +136,7 @@ func getAllSites(db *sql.DB) ([]models.Site, error) {
 		if err := rows.Scan(&site.ID, &site.Name, &site.URL, &site.IsUp, &site.LastCheck); err != nil {
 			return nil, err
 		}
+		site.LastCheck = math.Round(site.LastCheck * 1000)
 		sites = append(sites, site)
 	}
 	return sites, nil

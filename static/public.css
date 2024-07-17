@@ -5,7 +5,7 @@ body {
     padding: 1rem;
 }
 
-header, main {
+header, main, footer {
     padding: 1rem 1.5rem;
     width: 100%;
     max-width: 48rem;
@@ -16,6 +16,11 @@ header {
     background: var(--color-primary-950);
     color: var(--color-primary-100);
     border-radius: 6px;
+}
+
+footer {
+    color: var(--color-gray-400);
+    padding-top: 0;
 }
 
 .join-link {

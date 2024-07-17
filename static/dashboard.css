@@ -1,24 +1,26 @@
 @import "/static/reset.css";
 @import "/static/theme.css";
 
+body {
+    padding: 1rem;
+}
+
 header {
     background-color: var(--color-primary-950);
     color: var(--color-primary-100);
     padding: 1rem;
     text-align: center;
+    border-radius: 6px;
 }
 
 header h1 {
     font-weight: bold;
 }
 
-main {
-    max-width: 1200px;
-    margin: 2rem auto;
-    padding: 0 1rem;
-}
-
-.table-responsive {
+header, main {
+    width: 100%;
+    max-width: 92rem;
+    margin: 0 auto 1rem auto;
     overflow-x: auto;
 }
 

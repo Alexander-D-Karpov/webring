@@ -19,77 +19,75 @@
     </a>
 </header>
 <main>
-    <div class="table-responsive">
-        <table>
-            <thead>
-            <tr>
-                <th>ID</th>
-                <th>Name</th>
-                <th>URL</th>
-                <th>Status</th>
-                <th>Ping</th>
-                <th>Actions</th>
-            </tr>
-            </thead>
-            <tbody>
-            <tr>
-                <td><input type="number" name="id" placeholder="ID" form="form-new" required></td>
-                <td><input type="text" name="name" placeholder="Name" form="form-new" required></td>
-                <td><input type="url" name="url" placeholder="URL" form="form-new" required></td>
-                <td></td>
-                <td></td>
-                <td>
-                    <button type="submit" form="form-new">
-                        <i class="ri-check-line"></i>
-                    </button>
-                    <form action="/dashboard/add" method="POST" style="display: none" id="form-new"></form>
-                </td>
-            </tr>
-            {{range .}}
-            <tr>
-                <td>{{.ID}}</td>
-                <td>
-                    <div class="cell">
-                        {{if .Favicon}}
-                        <img src="/media/{{.Favicon}}" alt="" width="16" height="16" style="margin-left: 0.5rem">
-                        {{end}}
-                        <input type="text" name="name" value="{{.Name}}" form="form-{{.ID}}" required>
-                    </div>
-                </td>
-                <td>
-                    <div class="cell">
-                        <input type="url" name="url" value="{{.URL}}" form="form-{{.ID}}" required>
-                        <a href="{{.URL}}" target="_blank">
-                            <i class="ri-arrow-right-up-line"></i>
-                        </a>
-                    </div>
-                </td>
-                <td>
-                    {{if .IsUp}}
-                    <span class="badge badge-success">Up</span>
-                    {{else}}
-                    <span class="badge badge-danger">Down</span>
+    <table>
+        <thead>
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>URL</th>
+            <th>Status</th>
+            <th>Ping</th>
+            <th>Actions</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+            <td><input type="number" name="id" placeholder="ID" form="form-new" required></td>
+            <td><input type="text" name="name" placeholder="Name" form="form-new" required></td>
+            <td><input type="url" name="url" placeholder="URL" form="form-new" required></td>
+            <td></td>
+            <td></td>
+            <td>
+                <button type="submit" form="form-new">
+                    <i class="ri-check-line"></i>
+                </button>
+                <form action="/dashboard/add" method="POST" style="display: none" id="form-new"></form>
+            </td>
+        </tr>
+        {{range .}}
+        <tr>
+            <td>{{.ID}}</td>
+            <td>
+                <div class="cell">
+                    {{if .Favicon}}
+                    <img src="/media/{{.Favicon}}" alt="" width="16" height="16" style="margin-left: 0.5rem">
                     {{end}}
-                </td>
-                <td>{{.LastCheck}}</td>
-                <td>
-                    <div class="cell">
-                        <button type="submit" form="form-{{.ID}}">
-                            <i class="ri-save-3-line"></i>
+                    <input type="text" name="name" value="{{.Name}}" form="form-{{.ID}}" required>
+                </div>
+            </td>
+            <td>
+                <div class="cell">
+                    <input type="url" name="url" value="{{.URL}}" form="form-{{.ID}}" required>
+                    <a href="{{.URL}}" target="_blank">
+                        <i class="ri-arrow-right-up-line"></i>
+                    </a>
+                </div>
+            </td>
+            <td>
+                {{if .IsUp}}
+                <span class="badge badge-success">Up</span>
+                {{else}}
+                <span class="badge badge-danger">Down</span>
+                {{end}}
+            </td>
+            <td>{{.LastCheck}}</td>
+            <td>
+                <div class="cell">
+                    <button type="submit" form="form-{{.ID}}">
+                        <i class="ri-save-3-line"></i>
+                    </button>
+                    <form action="/dashboard/update/{{.ID}}" method="POST" id="form-{{.ID}}"></form>
+                    <form action="/dashboard/remove/{{.ID}}" method="POST" style="display: contents">
+                        <button type="submit">
+                            <i class="ri-delete-bin-line"></i>
                         </button>
-                        <form action="/dashboard/update/{{.ID}}" method="POST" id="form-{{.ID}}"></form>
-                        <form action="/dashboard/remove/{{.ID}}" method="POST" style="display: contents">
-                            <button type="submit">
-                                <i class="ri-delete-bin-line"></i>
-                            </button>
-                        </form>
-                    </div>
-                </td>
-            </tr>
-            {{end}}
-            </tbody>
-        </table>
-    </div>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        {{end}}
+        </tbody>
+    </table>
 </main>
 </body>
 </html>

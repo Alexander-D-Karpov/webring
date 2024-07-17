@@ -86,6 +86,7 @@ th {
 .cell {
     width: 100%;
     justify-content: stretch;
+    align-items: center;
     display: flex;
     gap: .5rem;
 }

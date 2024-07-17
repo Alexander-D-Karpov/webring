@@ -3,19 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Webring Sites</title>
+    <title>Webring</title>
     <link rel="stylesheet" href="/static/public.css">
+    <link rel="preconnect" href="https://rsms.me/">
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
 </head>
 <body>
 <header>
-    <h1>Webring Sites</h1>
+    <h1>
+        <i class="ri-bubble-chart-fill"></i>
+        Webring Listing
+    </h1>
 </header>
 <main>
     <ul class="site-list">
-        {{range .}}
+        {{range .Sites}}
         <li>
-            <img src="/media/{{.Favicon}}" alt="" width="16" height="16">
-            <a href="{{.URL}}" target="_blank">{{.Name}}</a>
+            {{if .Favicon}}
+            <img src="/media/{{.Favicon}}" alt="" width="20" height="20">
+            {{else}}
+            <div class="favicon-fallback"></div>
+            {{end}}
+            <a href="{{.URL}}" target="_blank" title="Click to visit!">
+                {{.Name}}
+                <i class="ri-arrow-right-up-line"></i>
+            </a>
+        </li>
+        {{end}}
+        {{if .ContactLink}}
+        <li class="join-link">
+            <i class="ri-user-add-line"></i>
+            <a href="{{.ContactLink}}" target="_blank">...and maybe you?</a>
         </li>
         {{end}}
     </ul>

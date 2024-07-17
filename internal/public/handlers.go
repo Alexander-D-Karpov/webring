@@ -6,9 +6,15 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"webring/internal/models"
 )
+
+type TemplateData struct {
+	Sites       []models.PublicSite
+	ContactLink string
+}
 
 var (
 	templates   *template.Template
@@ -43,7 +49,8 @@ func listSitesHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		err = t.ExecuteTemplate(w, "sites.html", sites)
+		data := TemplateData{sites, os.Getenv("CONTACT_LINK")}
+		err = t.ExecuteTemplate(w, "sites.html", data)
 		if err != nil {
 			log.Printf("Error rendering template: %v", err)
 			http.Error(w, "Error rendering template", http.StatusInternalServerError)

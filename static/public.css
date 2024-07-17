@@ -1,0 +1,48 @@
+@import "/static/reset.css";
+@import "/static/theme.css";
+
+body {
+    padding: 1rem;
+}
+
+header, main {
+    padding: 1rem 1.5rem;
+    width: 100%;
+    max-width: 48rem;
+    margin: 0 auto;
+}
+
+header {
+    background: var(--color-primary-950);
+    color: var(--color-primary-100);
+    border-radius: 6px;
+}
+
+.join-link {
+    color: var(--color-gray-400);
+}
+
+ul {
+    flex-direction: column;
+    display: flex;
+    gap: 1.25rem;
+    font-size: 1.25rem;
+}
+
+li {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+li img {
+    width: 20px;
+    aspect-ratio: 1 / 1;
+}
+
+li .favicon-fallback {
+    width: 20px;
+    height: 20px;
+    background: var(--color-gray-900);
+    border-radius: 2px;
+}

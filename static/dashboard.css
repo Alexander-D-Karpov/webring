@@ -1,35 +1,5 @@
 @import "/static/reset.css";
-
-:root {
-    --color-primary-100: #dbeafe;
-    --color-primary-900: #1e3a8a;
-    --color-primary-950: #172554;
-
-    --color-gray-100: #f4f4f5;
-    --color-gray-400: #a1a1aa;
-    --color-gray-600: #52525b;
-    --color-gray-900: #18181b;
-    --color-gray-950: #09090b;
-
-    --color-green-100: #dcfce7;
-    --color-green-700: #15803d;
-
-    --color-red-100: #fee2e2;
-    --color-red-700: #b91c1c;
-
-    font-family: Inter, sans-serif;
-    font-feature-settings: 'liga' 1, 'calt' 1; /* fix for Chrome */
-    font-weight: 500;
-}
-
-@supports (font-variation-settings: normal) {
-    :root { font-family: InterVariable, sans-serif; }
-}
-
-body {
-    background-color: var(--color-gray-950);
-    color: var(--color-gray-100);
-}
+@import "/static/theme.css";
 
 header {
     background-color: var(--color-primary-950);

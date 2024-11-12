@@ -5,7 +5,7 @@ This project is a webring relay service built with Go. It manages a list of webs
 ## Features
 
 - Dashboard for managing websites in the webring
-- Automatic uptime checking of websites
+- Automatic uptime checking of websites (with proxy support)
 - API endpoints for navigating the webring
 - Basic authentication for the dashboard
 

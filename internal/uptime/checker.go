@@ -56,6 +56,7 @@ func (c *Checker) Start() {
 	if c.debug {
 		log.Printf("[DEBUG] Checker started with proxy: %v, debug mode: true", c.proxy != nil)
 	}
+	// Default to checking every 5 minutes. If CHECKER_DEBUG == true, we check every 5 seconds for quicker testing.
 	ticker := time.NewTicker(5 * time.Minute)
 	if c.debug {
 		ticker = time.NewTicker(5 * time.Second)
@@ -74,6 +75,7 @@ func (c *Checker) checkAllSites() {
 
 	c.debugLog("Starting check of %d sites", len(sites))
 
+	// If a proxy is configured, first attempt checks using the proxy
 	if c.proxy != nil {
 		proxySuccess := false
 		allProxyErrors := true
@@ -96,6 +98,7 @@ func (c *Checker) checkAllSites() {
 					allProxyErrors = false
 				} else {
 					c.debugLog("Site %s is down (proxy): %s", s.URL, errorMsg)
+					// If the error does NOT look like a proxy problem, mark that not all errors are proxy-only
 					if !strings.Contains(errorMsg, "cannot connect to proxy") &&
 						!strings.Contains(errorMsg, "proxy refused connection") &&
 						!strings.Contains(errorMsg, "no route to host") {
@@ -105,23 +108,25 @@ func (c *Checker) checkAllSites() {
 				}
 				mutex.Unlock()
 
-				if isUp {
-					c.updateSiteStatus(s.ID, true, responseTime)
+				c.updateSiteStatus(s.ID, isUp, responseTime)
+				if !isUp {
+					c.logError(s.URL, errorMsg)
 				}
 			}(site)
 		}
 		wg.Wait()
 
+		// If *every* site failed due to what looks like a proxy error, assume proxy is down
 		c.proxyAlive = proxySuccess || !allProxyErrors
-
 		if !c.proxyAlive {
 			log.Printf("Proxy appears to be down, retrying with direct connections")
 			c.debugLog("All sites failed with proxy errors, switching to direct connections")
 
+			var wg2 sync.WaitGroup
 			for _, site := range sites {
-				wg.Add(1)
+				wg2.Add(1)
 				go func(s models.Site) {
-					defer wg.Done()
+					defer wg2.Done()
 
 					c.debugLog("Retrying site %s (ID: %d) without proxy", s.URL, s.ID)
 					isUp, responseTime, errorMsg := c.doCheckSite(s, false)
@@ -138,7 +143,8 @@ func (c *Checker) checkAllSites() {
 					}
 				}(site)
 			}
-			wg.Wait()
+			wg2.Wait()
+
 		} else {
 			c.debugLog("Proxy is working correctly, no need for direct connection retries")
 		}
@@ -169,6 +175,8 @@ func (c *Checker) checkAllSites() {
 	}
 }
 
+// doCheckSite attempts a HEAD request to the site.
+// `useProxy == true` uses the configured proxy (if any), else direct request.
 func (c *Checker) doCheckSite(site models.Site, useProxy bool) (bool, float64, string) {
 	transport := &http.Transport{
 		TLSHandshakeTimeout: 10 * time.Second,
@@ -202,13 +210,13 @@ func (c *Checker) doCheckSite(site models.Site, useProxy bool) (bool, float64, s
 		return false, elapsed, errorMsg
 	}
 	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			c.debugLog("Error closing response body for %s: %v", siteUrl, err)
+		if cerr := Body.Close(); cerr != nil {
+			c.debugLog("Error closing response body for %s: %v", siteUrl, cerr)
 		}
 	}(resp.Body)
 
 	c.debugLog("Request to %s completed with status %d (took %.2fs)", siteUrl, resp.StatusCode, elapsed)
+	// Treat any 5xx as "down," 4xx is considered "up" from the server's standpoint
 	return resp.StatusCode < 500, elapsed, ""
 }
 
@@ -219,21 +227,20 @@ func (c *Checker) updateSiteStatus(id int, isUp bool, responseTime float64) {
 	}
 }
 
-func (c *Checker) logError(url, errorMsg string) {
+func (c *Checker) logError(siteURL, errorMsg string) {
 	f, err := os.OpenFile("checker_error.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Printf("Error opening log file: %v", err)
 		return
 	}
 	defer func(f *os.File) {
-		err := f.Close()
-		if err != nil {
-			log.Printf("Error closing log file: %v", err)
+		if cerr := f.Close(); cerr != nil {
+			log.Printf("Error closing log file: %v", cerr)
 		}
 	}(f)
 
-	if _, err := f.WriteString(fmt.Sprintf("%s failed to respond: %s\n", url, errorMsg)); err != nil {
-		log.Printf("Error writing to log file: %v", err)
+	if _, werr := f.WriteString(fmt.Sprintf("%s failed to respond: %s\n", siteURL, errorMsg)); werr != nil {
+		log.Printf("Error writing to log file: %v", werr)
 	}
 }
 
@@ -243,9 +250,8 @@ func (c *Checker) getAllSites() ([]models.Site, error) {
 		return nil, err
 	}
 	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
-			log.Printf("Error closing rows: %v", err)
+		if cerr := rows.Close(); cerr != nil {
+			log.Printf("Error closing rows: %v", cerr)
 		}
 	}(rows)
 
@@ -260,6 +266,6 @@ func (c *Checker) getAllSites() ([]models.Site, error) {
 	return sites, nil
 }
 
-func hasProtocol(url string) bool {
-	return len(url) > 8 && (url[:7] == "http://" || url[:8] == "https://")
+func hasProtocol(u string) bool {
+	return len(u) > 8 && (strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://"))
 }

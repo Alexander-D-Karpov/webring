@@ -204,110 +204,144 @@ func getRespondingSites(db *sql.DB) ([]models.PublicSite, error) {
 }
 
 func getNextSite(db *sql.DB, currentID string) (*models.PublicSite, error) {
-	var site models.PublicSite
-	err := db.QueryRow(`
-        WITH ring AS (
-            SELECT id, name, url, favicon, is_up,
-                   LEAD(id) OVER (ORDER BY id) AS next_id,
-                   LAG(id) OVER (ORDER BY id) AS prev_id
-            FROM sites
-            WHERE is_up = true
+	query := `
+        WITH c AS (
+            SELECT $1::bigint AS cid
+        ),
+        pick AS (
+            SELECT COALESCE(
+                (SELECT MIN(s2.id)
+                 FROM sites s2
+                 WHERE s2.is_up = TRUE
+                   AND s2.id > c.cid),
+                (SELECT MIN(s3.id)
+                 FROM sites s3
+                 WHERE s3.is_up = TRUE)
+            ) AS next_id
+            FROM c
         )
-        SELECT id, name, url, favicon
-        FROM ring
-        WHERE (id = $1 AND next_id IS NOT NULL AND next_id = (SELECT MIN(id) FROM ring))
-           OR (id > $1 AND is_up = true)
-           OR (id = (SELECT MIN(id) FROM ring WHERE is_up = true) AND $1 = (SELECT MAX(id) FROM ring WHERE is_up = true))
-        ORDER BY CASE
-            WHEN id > $1 THEN id
-            ELSE (SELECT MAX(id) FROM ring) + 1
-        END
-        LIMIT 1
-    `, currentID).Scan(&site.ID, &site.Name, &site.URL, &site.Favicon)
+        SELECT s.id, s.name, s.url, s.favicon
+        FROM pick
+        LEFT JOIN sites s ON s.id = pick.next_id
+    `
+
+	var site models.PublicSite
+	err := db.QueryRow(query, currentID).Scan(&site.ID, &site.Name, &site.URL, &site.Favicon)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("no next site found: %w", err)
+	}
+	// If we get 0, it means no up sites at all
+	if site.ID == 0 {
+		return nil, fmt.Errorf("no available sites found (zero up sites)")
 	}
 	return &site, nil
 }
 
 func getPreviousSite(db *sql.DB, currentID string) (*models.PublicSite, error) {
-	var site models.PublicSite
-	err := db.QueryRow(`
-        WITH ring AS (
-            SELECT id, name, url, favicon, is_up,
-                   LEAD(id) OVER (ORDER BY id) AS next_id,
-                   LAG(id) OVER (ORDER BY id) AS prev_id
-            FROM sites
-            WHERE is_up = true
+	query := `
+        WITH c AS (
+            SELECT $1::bigint AS cid
+        ),
+        pick AS (
+            SELECT COALESCE(
+                (SELECT MAX(s2.id)
+                 FROM sites s2
+                 WHERE s2.is_up = TRUE
+                   AND s2.id < c.cid),
+                (SELECT MAX(s3.id)
+                 FROM sites s3
+                 WHERE s3.is_up = TRUE)
+            ) AS prev_id
+            FROM c
         )
-        SELECT id, name, url, favicon
-        FROM ring
-        WHERE (id = $1 AND prev_id IS NOT NULL AND prev_id = (SELECT MAX(id) FROM ring))
-           OR (id < $1 AND is_up = true)
-           OR (id = (SELECT MAX(id) FROM ring WHERE is_up = true) AND $1 = (SELECT MIN(id) FROM ring WHERE is_up = true))
-        ORDER BY CASE
-            WHEN id < $1 THEN id
-            ELSE 0
-        END DESC
-        LIMIT 1
-    `, currentID).Scan(&site.ID, &site.Name, &site.URL, &site.Favicon)
+        SELECT s.id, s.name, s.url, s.favicon
+        FROM pick
+        LEFT JOIN sites s ON s.id = pick.prev_id
+    `
+	var site models.PublicSite
+	err := db.QueryRow(query, currentID).Scan(&site.ID, &site.Name, &site.URL, &site.Favicon)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("no previous site found: %w", err)
+	}
+	// If we get 0, it means no up sites at all
+	if site.ID == 0 {
+		return nil, fmt.Errorf("no available sites found (zero up sites)")
 	}
 	return &site, nil
 }
 
 func getSiteData(db *sql.DB, id string) (*models.SiteData, error) {
-	var data models.SiteData
-	err := db.QueryRow(`
-        WITH ring AS (
-            SELECT id, name, url, favicon, is_up,
-                   LAG(id) OVER (ORDER BY id) AS prev_id,
-                   LAG(name) OVER (ORDER BY id) AS prev_name,
-                   LAG(url) OVER (ORDER BY id) AS prev_url,
-                   LAG(favicon) OVER (ORDER BY id) AS prev_favicon,
-                   LEAD(id) OVER (ORDER BY id) AS next_id,
-                   LEAD(name) OVER (ORDER BY id) AS next_name,
-                   LEAD(url) OVER (ORDER BY id) AS next_url,
-                   LEAD(favicon) OVER (ORDER BY id) AS next_favicon
+	query := `
+        WITH current_site AS (
+            SELECT id, name, url, favicon, is_up
             FROM sites
-            WHERE is_up = true
+            WHERE id = $1
         ),
-        wrapped AS (
-            SELECT *,
-                   FIRST_VALUE(id) OVER (ORDER BY id) AS first_id,
-                   FIRST_VALUE(name) OVER (ORDER BY id) AS first_name,
-                   FIRST_VALUE(url) OVER (ORDER BY id) AS first_url,
-                   FIRST_VALUE(favicon) OVER (ORDER BY id) AS first_favicon,
-                   LAST_VALUE(id) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS last_id,
-                   LAST_VALUE(name) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS last_name,
-                   LAST_VALUE(url) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS last_url,
-                   LAST_VALUE(favicon) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS last_favicon
-            FROM ring
+        ring AS (
+            SELECT
+                c.id          AS curr_id,
+                c.name        AS curr_name,
+                c.url         AS curr_url,
+                c.favicon     AS curr_favicon,
+                c.is_up       AS curr_is_up,
+
+                /* Largest up-site ID < curr_id; if none, wrap to largest up-site ID overall */
+                COALESCE(
+                    (SELECT MAX(s2.id)
+                     FROM sites s2
+                     WHERE s2.is_up = TRUE AND s2.id < c.id),
+                    (SELECT MAX(s2.id)
+                     FROM sites s2
+                     WHERE s2.is_up = TRUE)
+                ) AS final_prev_id,
+
+                /* Smallest up-site ID > curr_id; if none, wrap to smallest up-site ID overall */
+                COALESCE(
+                    (SELECT MIN(s2.id)
+                     FROM sites s2
+                     WHERE s2.is_up = TRUE AND s2.id > c.id),
+                    (SELECT MIN(s2.id)
+                     FROM sites s2
+                     WHERE s2.is_up = TRUE)
+                ) AS final_next_id
+            FROM current_site c
         )
-        SELECT 
-            COALESCE(prev_id, last_id) AS prev_id,
-            COALESCE(prev_name, last_name) AS prev_name,
-            COALESCE(prev_url, last_url) AS prev_url,
-            COALESCE(prev_favicon, last_favicon) AS prev_favicon,
-            id AS curr_id,
-            name AS curr_name,
-            url AS curr_url,
-            favicon AS curr_favicon,
-            COALESCE(next_id, first_id) AS next_id,
-            COALESCE(next_name, first_name) AS next_name,
-            COALESCE(next_url, first_url) AS next_url,
-            COALESCE(next_favicon, first_favicon) AS next_favicon
-        FROM wrapped
-        WHERE id = $1
-    `, id).Scan(
+        SELECT
+          /* Prev site */
+          COALESCE(prevs.id, 0)       AS prev_id,
+          COALESCE(prevs.name, '')    AS prev_name,
+          COALESCE(prevs.url, '')     AS prev_url,
+          COALESCE(prevs.favicon, '') AS prev_favicon,
+
+          /* Current site (could be up or down) */
+          ring.curr_id                AS curr_id,
+          ring.curr_name              AS curr_name,
+          ring.curr_url               AS curr_url,
+          COALESCE(ring.curr_favicon, '') AS curr_favicon,
+
+          /* Next site */
+          COALESCE(nexts.id, 0)       AS next_id,
+          COALESCE(nexts.name, '')    AS next_name,
+          COALESCE(nexts.url, '')     AS next_url,
+          COALESCE(nexts.favicon, '') AS next_favicon
+
+        FROM ring
+        /* LEFT JOIN the prev/next IDs to get their details */
+        LEFT JOIN sites prevs ON prevs.id = ring.final_prev_id
+        LEFT JOIN sites nexts ON nexts.id = ring.final_next_id
+    `
+
+	var data models.SiteData
+	err := db.QueryRow(query, id).Scan(
 		&data.Prev.ID, &data.Prev.Name, &data.Prev.URL, &data.Prev.Favicon,
 		&data.Curr.ID, &data.Curr.Name, &data.Curr.URL, &data.Curr.Favicon,
 		&data.Next.ID, &data.Next.Name, &data.Next.URL, &data.Next.Favicon,
 	)
 	if err != nil {
+		// If we got sql.ErrNoRows, it means there's no site with this ID
 		return nil, err
 	}
+
 	return &data, nil
 }
 

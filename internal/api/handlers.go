@@ -25,6 +25,7 @@ func RegisterHandlers(r *mux.Router, db *sql.DB) {
 	apiRouter.HandleFunc("/{id}/random/data", randomSiteHandler(db)).Methods("GET")
 	apiRouter.HandleFunc("/{id}/random", randomSiteRedirectHandler(db)).Methods("GET")
 	apiRouter.HandleFunc("/sites", listPublicSitesHandler(db)).Methods("GET")
+	apiRouter.HandleFunc("/{id}", currentSiteRedirectHandler(db)).Methods("GET")
 }
 
 func previousSiteHandler(db *sql.DB) http.HandlerFunc {
@@ -122,6 +123,18 @@ func siteDataHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+func currentSiteRedirectHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := mux.Vars(r)["id"]
+		data, err := getCurrentSite(db, id)
+		if err != nil {
+			http.Error(w, "Site not found", http.StatusNotFound)
+			return
+		}
+		http.Redirect(w, r, data.URL, http.StatusFound)
+	}
+}
+
 func previousSiteRedirectHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
@@ -201,6 +214,23 @@ func getRespondingSites(db *sql.DB) ([]models.PublicSite, error) {
 		sites = append(sites, site)
 	}
 	return sites, nil
+}
+
+func getCurrentSite(db *sql.DB, currentID string) (*models.PublicSite, error) {
+	var site models.PublicSite
+	err := db.QueryRow(`
+        SELECT id, name, url, favicon
+        FROM sites
+        WHERE is_up = true AND id = $1
+        LIMIT 1
+    `, currentID).Scan(&site.ID, &site.Name, &site.URL, &site.Favicon)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("no available sites found")
+		}
+		return nil, fmt.Errorf("database error: %v", err)
+	}
+	return &site, nil
 }
 
 func getNextSite(db *sql.DB, currentID string) (*models.PublicSite, error) {

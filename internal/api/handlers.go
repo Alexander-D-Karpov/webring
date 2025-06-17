@@ -194,7 +194,7 @@ func listPublicSitesHandler(db *sql.DB) http.HandlerFunc {
 }
 
 func getRespondingSites(db *sql.DB) ([]models.PublicSite, error) {
-	rows, err := db.Query("SELECT slug, name, url, favicon FROM sites WHERE is_up = true ORDER BY id")
+	rows, err := db.Query("SELECT id, slug, name, url, favicon FROM sites WHERE is_up = true ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +208,7 @@ func getRespondingSites(db *sql.DB) ([]models.PublicSite, error) {
 	var sites []models.PublicSite
 	for rows.Next() {
 		var site models.PublicSite
-		if err := rows.Scan(&site.Slug, &site.Name, &site.URL, &site.Favicon); err != nil {
+		if err := rows.Scan(&site.ID, &site.Slug, &site.Name, &site.URL, &site.Favicon); err != nil {
 			return nil, err
 		}
 		sites = append(sites, site)
@@ -252,15 +252,19 @@ func getNextSite(db *sql.DB, currentSlug string) (*models.PublicSite, error) {
             ) AS next_id
             FROM c
         )
-        SELECT s.slug, s.name, s.url, s.favicon
+        SELECT s.id, s.slug, s.name, s.url, s.favicon
         FROM pick
         LEFT JOIN sites s ON s.id = pick.next_id
     `
 
 	var site models.PublicSite
-	err := db.QueryRow(query, currentSlug).Scan(&site.Slug, &site.Name, &site.URL, &site.Favicon)
+	err := db.QueryRow(query, currentSlug).Scan(&site.ID, &site.Slug, &site.Name, &site.URL, &site.Favicon)
 	if err != nil {
 		return nil, fmt.Errorf("no next site found: %w", err)
+	}
+	// If we get 0, it means no up sites at all
+	if site.ID == 0 {
+		return nil, fmt.Errorf("no available sites found (zero up sites)")
 	}
 	return &site, nil
 }
@@ -284,14 +288,17 @@ func getPreviousSite(db *sql.DB, currentSlug string) (*models.PublicSite, error)
             ) AS prev_id
             FROM c
         )
-        SELECT s.slug, s.name, s.url, s.favicon
+        SELECT s.id, s.slug, s.name, s.url, s.favicon
         FROM pick
         LEFT JOIN sites s ON s.id = pick.prev_id
     `
 	var site models.PublicSite
-	err := db.QueryRow(query, currentSlug).Scan(&site.Slug, &site.Name, &site.URL, &site.Favicon)
+	err := db.QueryRow(query, currentSlug).Scan(&site.ID, &site.Slug, &site.Name, &site.URL, &site.Favicon)
 	if err != nil {
 		return nil, fmt.Errorf("no previous site found: %w", err)
+	}
+	if site.ID == 0 {
+		return nil, fmt.Errorf("no available sites found (zero up sites)")
 	}
 	return &site, nil
 }
@@ -335,18 +342,21 @@ func getSiteData(db *sql.DB, slug string) (*models.SiteData, error) {
         )
         SELECT
           /* Prev site */
+          COALESCE(prevs.id, 0)       AS prev_id,
           COALESCE(prevs.slug, '')    AS prev_slug,
           COALESCE(prevs.name, '')    AS prev_name,
           COALESCE(prevs.url, '')     AS prev_url,
           COALESCE(prevs.favicon, '') AS prev_favicon,
 
           /* Current site (could be up or down) */
+          ring.curr_id                AS curr_id,
           ring.curr_slug              AS curr_slug,
           ring.curr_name              AS curr_name,
           ring.curr_url               AS curr_url,
           COALESCE(ring.curr_favicon, '') AS curr_favicon,
 
           /* Next site */
+          COALESCE(nexts.id, 0)       AS next_id,
           COALESCE(nexts.slug, '')    AS next_slug,
           COALESCE(nexts.name, '')    AS next_name,
           COALESCE(nexts.url, '')     AS next_url,
@@ -360,9 +370,9 @@ func getSiteData(db *sql.DB, slug string) (*models.SiteData, error) {
 
 	var data models.SiteData
 	err := db.QueryRow(query, slug).Scan(
-		&data.Prev.Slug, &data.Prev.Name, &data.Prev.URL, &data.Prev.Favicon,
-		&data.Curr.Slug, &data.Curr.Name, &data.Curr.URL, &data.Curr.Favicon,
-		&data.Next.Slug, &data.Next.Name, &data.Next.URL, &data.Next.Favicon,
+		&data.Prev.ID, &data.Prev.Slug, &data.Prev.Name, &data.Prev.URL, &data.Prev.Favicon,
+		&data.Curr.ID, &data.Curr.Slug, &data.Curr.Name, &data.Curr.URL, &data.Curr.Favicon,
+		&data.Next.ID, &data.Next.Slug, &data.Next.Name, &data.Next.URL, &data.Next.Favicon,
 	)
 	if err != nil {
 		// If we got sql.ErrNoRows, it means there's no site with this ID
@@ -375,12 +385,12 @@ func getSiteData(db *sql.DB, slug string) (*models.SiteData, error) {
 func getRandomSite(db *sql.DB, currentSlug string) (*models.PublicSite, error) {
 	var site models.PublicSite
 	err := db.QueryRow(`
-        SELECT slug, name, url, favicon
+        SELECT id, slug, name, url, favicon
         FROM sites
         WHERE is_up = true AND slug != $1
         ORDER BY RANDOM()
         LIMIT 1
-    `, currentSlug).Scan(&site.Slug, &site.Name, &site.URL, &site.Favicon)
+    `, currentSlug).Scan(&site.ID, &site.Slug, &site.Name, &site.URL, &site.Favicon)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("no available sites found")

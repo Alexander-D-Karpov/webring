@@ -50,18 +50,16 @@
         <tr>
             <td>
                 {{.ID}}
-                <form action="/dashboard/reorder/{{.ID}}/1" method="POST" style="display: contents">
-                    <button type="submit">
-                        <i class="ri-arrow-down-s-line"></i>
-                    </button>
-                </form>
-                {{if gt .ID 1}}
                 <form action="/dashboard/reorder/{{.ID}}/-1" method="POST" style="display: contents">
                     <button type="submit">
                         <i class="ri-arrow-up-s-line"></i>
                     </button>
                 </form>
-                {{end}}
+                <form action="/dashboard/reorder/{{.ID}}/1" method="POST" style="display: contents">
+                    <button type="submit">
+                        <i class="ri-arrow-down-s-line"></i>
+                    </button>
+                </form>
             </td>
             <td>
                 <div class="cell">

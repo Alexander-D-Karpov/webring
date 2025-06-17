@@ -211,12 +211,19 @@ func reorderSiteHandler(db *sql.DB) http.HandlerFunc {
 		swapId := id + offset
 
 		_, err = db.Exec(`
+			WITH swap AS (
+				SELECT id
+				FROM sites
+				ORDER BY abs($2 - id)
+				LIMIT 1
+			)
 			UPDATE sites
-			SET id = CASE id
-				 WHEN $1 THEN $2
-				 WHEN $2 THEN $1
+			SET id = CASE sites.id
+				WHEN $1 THEN swap.id
+				WHEN swap.id THEN $1
 			END
-			WHERE id IN ($1, $2);
+			FROM swap
+			WHERE sites.id IN ($1, swap.id);
 		`, id, swapId)
 		if err != nil {
 			println(err.Error())

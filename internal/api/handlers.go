@@ -17,12 +17,12 @@ func RegisterHandlers(r *mux.Router, db *sql.DB) {
 	apiRouter := r.PathPrefix("").Subrouter()
 	apiRouter.Use(middleware.CORSMiddleware)
 
-	apiRouter.HandleFunc("/{id}/prev/", previousSiteHandler(db)).Methods("GET")
-	apiRouter.HandleFunc("/{id}/next/", nextSiteHandler(db)).Methods("GET")
+	apiRouter.HandleFunc("/{id}/prev/data", previousSiteHandler(db)).Methods("GET")
+	apiRouter.HandleFunc("/{id}/next/data", nextSiteHandler(db)).Methods("GET")
 	apiRouter.HandleFunc("/{id}/prev", previousSiteRedirectHandler(db)).Methods("GET")
 	apiRouter.HandleFunc("/{id}/next", nextSiteRedirectHandler(db)).Methods("GET")
 	apiRouter.HandleFunc("/{id}/data", siteDataHandler(db)).Methods("GET")
-	apiRouter.HandleFunc("/{id}/random/", randomSiteHandler(db)).Methods("GET")
+	apiRouter.HandleFunc("/{id}/random/data", randomSiteHandler(db)).Methods("GET")
 	apiRouter.HandleFunc("/{id}/random", randomSiteRedirectHandler(db)).Methods("GET")
 	apiRouter.HandleFunc("/sites", listPublicSitesHandler(db)).Methods("GET")
 }
@@ -109,7 +109,7 @@ func siteDataHandler(db *sql.DB) http.HandlerFunc {
 
 		data, err := getSiteData(db, id)
 		if err != nil {
-			http.Error(w, "Error fetching site data", http.StatusInternalServerError)
+			http.Error(w, "Site not found", http.StatusNotFound)
 			return
 		}
 

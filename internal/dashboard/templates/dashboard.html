@@ -34,7 +34,7 @@
         <tbody>
         <tr>
             <td><input type="number" name="id" placeholder="ID" form="form-new" required></td>
-            <td><input type="text" name="slug" placeholder="Slug" form="form-new" required></td>
+            <td><input type="text" name="slug" placeholder="Slug" form="form-new" pattern="[a-z0-9\-]+" required></td>
             <td><input type="text" name="name" placeholder="Name" form="form-new" required></td>
             <td><input type="url" name="url" placeholder="URL" form="form-new" required></td>
             <td></td>
@@ -65,7 +65,7 @@
             </td>
             <td>
                 <div class="cell">
-                    <input type="text" name="slug" value="{{.Slug}}" form="form-{{.ID}}" required>
+                    <input type="text" name="slug" value="{{.Slug}}" form="form-{{.ID}}" pattern="[a-z0-9\-]+" required>
                 </div>
             </td>
             <td>

@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"sync"
 	"webring/internal/favicon"
@@ -16,6 +17,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
+var slugRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
 var (
 	templates   *template.Template
 	templatesMu sync.RWMutex
@@ -95,6 +97,11 @@ func addSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		if !slugRegex.MatchString(slug) {
+			http.Error(w, "Invalid Slug", http.StatusBadRequest)
+			return
+		}
+
 		result, err := db.Exec("INSERT INTO sites (id, slug, name, url) VALUES ($1, $2, $3, $4)", id, slug, name, url)
 		if err != nil {
 			http.Error(w, "Error adding site", http.StatusInternalServerError)
@@ -147,6 +154,11 @@ func updateSiteHandler(db *sql.DB) http.HandlerFunc {
 
 		if slug == "" || name == "" || url == "" {
 			http.Error(w, "Slug, Name and URL are required", http.StatusBadRequest)
+			return
+		}
+
+		if !slugRegex.MatchString(slug) {
+			http.Error(w, "Invalid Slug", http.StatusBadRequest)
 			return
 		}
 

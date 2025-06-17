@@ -17,7 +17,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-var slugRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
+var slugRegex = regexp.MustCompile(`^[a-z0-9-]{3,50}$`)
 var (
 	templates   *template.Template
 	templatesMu sync.RWMutex

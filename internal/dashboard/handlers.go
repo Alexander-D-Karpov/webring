@@ -35,6 +35,7 @@ func RegisterHandlers(r *mux.Router, db *sql.DB) {
 	dashboardRouter.HandleFunc("/add", addSiteHandler(db)).Methods("POST")
 	dashboardRouter.HandleFunc("/remove/{id}", removeSiteHandler(db)).Methods("POST")
 	dashboardRouter.HandleFunc("/update/{id}", updateSiteHandler(db)).Methods("POST")
+	dashboardRouter.HandleFunc("/reorder/{id}/{offset}", reorderSiteHandler(db)).Methods("POST")
 }
 
 func basicAuthMiddleware(next http.Handler) http.Handler {
@@ -79,11 +80,12 @@ func dashboardHandler(db *sql.DB) http.HandlerFunc {
 func addSiteHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := r.FormValue("id")
+		slug := r.FormValue("slug")
 		name := r.FormValue("name")
 		url := r.FormValue("url")
 
-		if idStr == "" || name == "" || url == "" {
-			http.Error(w, "ID, Name, and URL are required", http.StatusBadRequest)
+		if slug == "" || idStr == "" || name == "" || url == "" {
+			http.Error(w, "ID, Slug, Name, and URL are required", http.StatusBadRequest)
 			return
 		}
 
@@ -93,7 +95,7 @@ func addSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		result, err := db.Exec("INSERT INTO sites (id, name, url) VALUES ($1, $2, $3)", id, name, url)
+		result, err := db.Exec("INSERT INTO sites (id, slug, name, url) VALUES ($1, $2, $3, $4)", id, slug, name, url)
 		if err != nil {
 			http.Error(w, "Error adding site", http.StatusInternalServerError)
 			return
@@ -139,15 +141,16 @@ func removeSiteHandler(db *sql.DB) http.HandlerFunc {
 func updateSiteHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := mux.Vars(r)["id"]
+		slug := r.FormValue("slug")
 		name := r.FormValue("name")
 		url := r.FormValue("url")
 
-		if name == "" || url == "" {
-			http.Error(w, "Name and URL are required", http.StatusBadRequest)
+		if slug == "" || name == "" || url == "" {
+			http.Error(w, "Slug, Name and URL are required", http.StatusBadRequest)
 			return
 		}
 
-		_, err := db.Exec("UPDATE sites SET name = $1, url = $2 WHERE id = $3", name, url, id)
+		_, err := db.Exec("UPDATE sites SET slug = $1, name = $2, url = $3 WHERE id = $4", slug, name, url, id)
 		if err != nil {
 			http.Error(w, "Error updating site", http.StatusInternalServerError)
 			return
@@ -176,8 +179,45 @@ func updateSiteHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+func reorderSiteHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := mux.Vars(r)["id"]
+		offsetStr := mux.Vars(r)["offset"]
+
+		id, err := strconv.Atoi(idStr)
+		if err != nil {
+			http.Error(w, "Invalid ID", http.StatusBadRequest)
+			return
+		}
+
+		offset, err := strconv.Atoi(offsetStr)
+		if err != nil {
+			http.Error(w, "Invalid Offset", http.StatusBadRequest)
+			return
+		}
+
+		swapId := id + offset
+
+		_, err = db.Exec(`
+			UPDATE sites
+			SET id = CASE id
+				 WHEN $1 THEN $2
+				 WHEN $2 THEN $1
+			END
+			WHERE id IN ($1, $2);
+		`, id, swapId)
+		if err != nil {
+			println(err.Error())
+			http.Error(w, "Error updating site", http.StatusInternalServerError)
+			return
+		}
+
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+	}
+}
+
 func getAllSites(db *sql.DB) ([]models.Site, error) {
-	rows, err := db.Query("SELECT id, name, url, is_up, last_check, favicon FROM sites ORDER BY id")
+	rows, err := db.Query("SELECT id, slug, name, url, is_up, last_check, favicon FROM sites ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +231,7 @@ func getAllSites(db *sql.DB) ([]models.Site, error) {
 	var sites []models.Site
 	for rows.Next() {
 		var site models.Site
-		err := rows.Scan(&site.ID, &site.Name, &site.URL, &site.IsUp, &site.LastCheck, &site.Favicon)
+		err := rows.Scan(&site.ID, &site.Slug, &site.Name, &site.URL, &site.IsUp, &site.LastCheck, &site.Favicon)
 		if err != nil {
 			return nil, err
 		}

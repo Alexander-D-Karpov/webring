@@ -23,6 +23,7 @@
         <thead>
         <tr>
             <th>ID</th>
+            <th>Slug</th>
             <th>Name</th>
             <th>URL</th>
             <th>Status</th>
@@ -33,6 +34,7 @@
         <tbody>
         <tr>
             <td><input type="number" name="id" placeholder="ID" form="form-new" required></td>
+            <td><input type="text" name="slug" placeholder="Slug" form="form-new" required></td>
             <td><input type="text" name="name" placeholder="Name" form="form-new" required></td>
             <td><input type="url" name="url" placeholder="URL" form="form-new" required></td>
             <td></td>
@@ -46,7 +48,26 @@
         </tr>
         {{range .}}
         <tr>
-            <td>{{.ID}}</td>
+            <td>
+                {{.ID}}
+                <form action="/dashboard/reorder/{{.ID}}/1" method="POST" style="display: contents">
+                    <button type="submit">
+                        <i class="ri-arrow-down-s-line"></i>
+                    </button>
+                </form>
+                {{if gt .ID 1}}
+                <form action="/dashboard/reorder/{{.ID}}/-1" method="POST" style="display: contents">
+                    <button type="submit">
+                        <i class="ri-arrow-up-s-line"></i>
+                    </button>
+                </form>
+                {{end}}
+            </td>
+            <td>
+                <div class="cell">
+                    <input type="text" name="slug" value="{{.Slug}}" form="form-{{.ID}}" required>
+                </div>
+            </td>
             <td>
                 <div class="cell">
                     {{if .Favicon}}

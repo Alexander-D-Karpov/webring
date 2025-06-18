@@ -2,6 +2,8 @@ package dashboard
 
 import (
 	"database/sql"
+	"errors"
+	"github.com/lib/pq"
 	"html/template"
 	"log"
 	"math"
@@ -104,6 +106,13 @@ func addSiteHandler(db *sql.DB) http.HandlerFunc {
 
 		result, err := db.Exec("INSERT INTO sites (id, slug, name, url) VALUES ($1, $2, $3, $4)", id, slug, name, url)
 		if err != nil {
+			var pqErr *pq.Error
+			if errors.As(err, &pqErr) {
+				if pqErr.Code.Name() == "unique_violation" {
+					http.Error(w, "Slug or ID is already in use", http.StatusConflict)
+					return
+				}
+			}
 			http.Error(w, "Error adding site", http.StatusInternalServerError)
 			return
 		}
@@ -164,6 +173,13 @@ func updateSiteHandler(db *sql.DB) http.HandlerFunc {
 
 		_, err := db.Exec("UPDATE sites SET slug = $1, name = $2, url = $3 WHERE id = $4", slug, name, url, id)
 		if err != nil {
+			var pqErr *pq.Error
+			if errors.As(err, &pqErr) {
+				if pqErr.Code.Name() == "unique_violation" {
+					http.Error(w, "Slug or ID is already in use", http.StatusConflict)
+					return
+				}
+			}
 			http.Error(w, "Error updating site", http.StatusInternalServerError)
 			return
 		}

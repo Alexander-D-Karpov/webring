@@ -1,0 +1,5 @@
+ALTER TABLE sites DROP CONSTRAINT sites_unique_id;
+ALTER TABLE sites DROP CONSTRAINT sites_pkey;
+ALTER TABLE sites ADD PRIMARY KEY (id);
+
+ALTER TABLE sites DROP COLUMN slug;

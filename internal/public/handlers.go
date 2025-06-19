@@ -59,7 +59,7 @@ func listSitesHandler(db *sql.DB) http.HandlerFunc {
 }
 
 func getRespondingSites(db *sql.DB) ([]models.PublicSite, error) {
-	rows, err := db.Query("SELECT id, name, url, favicon FROM sites WHERE is_up = true ORDER BY id")
+	rows, err := db.Query("SELECT slug, name, url, favicon FROM sites WHERE is_up = true ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func getRespondingSites(db *sql.DB) ([]models.PublicSite, error) {
 	var sites []models.PublicSite
 	for rows.Next() {
 		var site models.PublicSite
-		if err := rows.Scan(&site.ID, &site.Name, &site.URL, &site.Favicon); err != nil {
+		if err := rows.Scan(&site.Slug, &site.Name, &site.URL, &site.Favicon); err != nil {
 			return nil, err
 		}
 		sites = append(sites, site)

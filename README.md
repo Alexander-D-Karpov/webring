@@ -45,11 +45,12 @@ chmod +x webring
 
 - Access the dashboard at `http://localhost:8080/dashboard` (use the credentials set in your `.env` file)
 - API endpoints:
-  - Next site: `GET /{id}/next/`
-  - Previous site: `GET /{id}/prev/`
-  - Random site: `GET /{id}/random/`
-  - Full data for a site: `GET /{id}/data`
+  - Next site: `GET /{slug}/next/data`
+  - Previous site: `GET /{slug}/prev/data`
+  - Random site: `GET /{slug}/random/data`
+  - Full data for a site: `GET /{slug}/data`
 - Redirect endpoints:
-    - Next site: `GET /{id}/next`
-    - Previous site: `GET /{id}/prev`
-    - Random site: `GET /{id}/random`
+  - Visit site: `GET /{slug}`  
+  - Next site: `GET /{slug}/next`
+  - Previous site: `GET /{slug}/prev`
+  - Random site: `GET /{slug}/random`

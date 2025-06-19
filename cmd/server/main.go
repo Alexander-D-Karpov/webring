@@ -81,8 +81,8 @@ func main() {
 	go checker.Start()
 
 	r := mux.NewRouter()
-	api.RegisterHandlers(r, db)
 	dashboard.RegisterHandlers(r, db)
+	api.RegisterHandlers(r, db)
 
 	// Serve static files
 	staticFiles, err := fs.Sub(webring.Files, "static")

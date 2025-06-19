@@ -2,6 +2,7 @@ package models
 
 type Site struct {
 	ID        int     `json:"id"`
+	Slug      string  `json:"slug"`
 	Name      string  `json:"name"`
 	URL       string  `json:"url"`
 	IsUp      bool    `json:"is_up"`
@@ -11,6 +12,7 @@ type Site struct {
 
 type PublicSite struct {
 	ID      int     `json:"id"`
+	Slug    string  `json:"slug"`
 	Name    string  `json:"name"`
 	URL     string  `json:"url"`
 	Favicon *string `json:"favicon"`

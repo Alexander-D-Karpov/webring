@@ -11,16 +11,20 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
 func GetAndStoreFavicon(siteURL string, mediaFolder string, siteID int) (string, error) {
-	faviconURL, err := getFaviconFromHTML(siteURL)
+	baseURL, err := url.Parse(siteURL)
+	if err != nil {
+		return "", err
+	}
+
+	faviconURL, err := getFaviconFromHTML(baseURL)
 	if err == nil {
-		faviconPath, err := downloadFavicon(faviconURL, siteURL, mediaFolder, siteID)
+		faviconPath, err := downloadFavicon(faviconURL, baseURL, mediaFolder, siteID)
 		if err == nil {
 			return faviconPath, nil
 		}
@@ -38,8 +42,8 @@ func GetAndStoreFavicon(siteURL string, mediaFolder string, siteID int) (string,
 	}
 
 	for _, name := range commonFaviconNames {
-		faviconURL := fmt.Sprintf("%s/%s", siteURL, name)
-		faviconPath, err := downloadFavicon(faviconURL, siteURL, mediaFolder, siteID)
+		faviconURL := baseURL.ResolveReference(&url.URL{Path: name})
+		faviconPath, err := downloadFavicon(faviconURL, baseURL, mediaFolder, siteID)
 		if err == nil {
 			return faviconPath, nil
 		}
@@ -49,14 +53,14 @@ func GetAndStoreFavicon(siteURL string, mediaFolder string, siteID int) (string,
 	return "", errors.New("failed to find and download favicon")
 }
 
-func getFaviconFromHTML(siteURL string) (string, error) {
+func getFaviconFromHTML(baseURL *url.URL) (*url.URL, error) {
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
 
-	req, err := http.NewRequest("GET", siteURL, nil)
+	req, err := http.NewRequest("GET", baseURL.String(), nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
@@ -67,7 +71,7 @@ func getFaviconFromHTML(siteURL string) (string, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
@@ -77,12 +81,12 @@ func getFaviconFromHTML(siteURL string) (string, error) {
 	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to fetch HTML: status code %d", resp.StatusCode)
+		return nil, fmt.Errorf("failed to fetch HTML: status code %d", resp.StatusCode)
 	}
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var faviconURL string
@@ -94,27 +98,28 @@ func getFaviconFromHTML(siteURL string) (string, error) {
 	})
 
 	if !exists {
-		log.Printf("No favicon link found for site: %s", siteURL)
-		return "", errors.New("favicon not found in HTML")
+		log.Printf("No favicon link found for site: %s", baseURL.String())
+		return nil, errors.New("favicon not found in HTML")
 	}
 
-	if !strings.HasPrefix(faviconURL, "http") {
-		baseURL, err := url.Parse(siteURL)
-		if err != nil {
-			return "", err
-		}
-		faviconURL = baseURL.ResolveReference(&url.URL{Path: faviconURL}).String()
+	parsedFaviconURL, err := url.Parse(faviconURL)
+	if err != nil {
+		return nil, err
 	}
 
-	return faviconURL, nil
+	if !parsedFaviconURL.IsAbs() {
+		parsedFaviconURL = baseURL.ResolveReference(parsedFaviconURL)
+	}
+
+	return parsedFaviconURL, nil
 }
 
-func downloadFavicon(faviconURL, siteURL, mediaFolder string, siteID int) (string, error) {
+func downloadFavicon(faviconURL *url.URL, baseURL *url.URL, mediaFolder string, siteID int) (string, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
 
-	req, err := http.NewRequest("GET", faviconURL, nil)
+	req, err := http.NewRequest("GET", faviconURL.String(), nil)
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +128,7 @@ func downloadFavicon(faviconURL, siteURL, mediaFolder string, siteID int) (strin
 	req.Header.Set("Accept", "image/webp,image/apng,image/*,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
 	req.Header.Set("Connection", "keep-alive")
-	req.Header.Set("Referer", siteURL)
+	req.Header.Set("Referer", baseURL.String())
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -144,7 +149,7 @@ func downloadFavicon(faviconURL, siteURL, mediaFolder string, siteID int) (strin
 	hasher.Write([]byte(fmt.Sprintf("%d-%s", siteID, faviconURL)))
 	hash := hex.EncodeToString(hasher.Sum(nil))
 
-	ext := filepath.Ext(faviconURL)
+	ext := filepath.Ext(faviconURL.Path)
 	if ext == "" {
 		ext = ".ico"
 	}

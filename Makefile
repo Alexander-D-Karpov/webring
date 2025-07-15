@@ -1,4 +1,4 @@
-include .env
+-include .env
 export
 
 MIGRATE := migrate -database "${DB_CONNECTION_STRING}" -path migrations

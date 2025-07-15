@@ -1,0 +1,5 @@
+allowlist:
+  description: "Local‑only template and CI scaffolding – no real secrets."
+  paths:
+    - ".env.template"
+    - ".github/workflows/go.yml"

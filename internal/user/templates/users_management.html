@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Users Management - Webring</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <link rel="preconnect" href="https://rsms.me/">
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
+</head>
+<body>
+<header>
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h1>
+            <i class="ri-bubble-chart-fill"></i>
+            Users Management
+        </h1>
+        <div>
+            <a href="/admin/requests">← Back to Admin Dashboard</a>
+        </div>
+    </div>
+</header>
+
+<main>
+    <table>
+        <thead>
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Telegram Username</th>
+            <th>Telegram ID</th>
+            <th>Admin</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+        </thead>
+        <tbody>
+        {{range .Users}}
+        <tr>
+            <td>{{.ID}}</td>
+            <td>
+                {{if .FirstName}}{{.FirstName}}{{end}}
+                {{if .LastName}} {{.LastName}}{{end}}
+            </td>
+            <td>{{if .TelegramUsername}}@{{.TelegramUsername}}{{end}}</td>
+            <td>{{if ne .TelegramID 0}}{{.TelegramID}}{{else}}<em>Not set</em>{{end}}</td>
+            <td>
+                {{if .IsAdmin}}
+                <span class="badge badge-success">Yes</span>
+                {{else}}
+                <span class="badge badge-danger">No</span>
+                {{end}}
+            </td>
+            <td>{{.CreatedAt.Format "15:04 02.01.2006"}}</td>
+            <td>
+                {{if ne .ID $.CurrentUser.ID}}
+                <button type="submit" form="form-{{.ID}}" onclick="return confirm('Are you sure you want to change this user\'s admin status? This will log them out.')">
+                    {{if .IsAdmin}}Remove Admin{{else}}Make Admin{{end}}
+                </button>
+                <form action="/admin/users/{{.ID}}/toggle-admin" method="POST" id="form-{{.ID}}"></form>
+                {{end}}
+            </td>
+        </tr>
+        {{end}}
+        </tbody>
+    </table>
+</main>
+</body>
+</html>

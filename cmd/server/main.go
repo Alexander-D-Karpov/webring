@@ -10,16 +10,27 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"webring"
-	"webring/internal/public"
+	"time"
 
+	"webring"
 	"webring/internal/api"
+	"webring/internal/auth"
 	"webring/internal/dashboard"
 	"webring/internal/database"
+	"webring/internal/public"
 	"webring/internal/uptime"
+	"webring/internal/user"
 
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
+)
+
+const (
+	dirPerm           = 0o755
+	filePerm          = 0o600
+	readTimeout       = 15 * time.Second
+	writeTimeout      = 15 * time.Second
+	serverIdleTimeout = 60 * time.Second
 )
 
 func setupLogging() (*os.File, error) {
@@ -28,19 +39,16 @@ func setupLogging() (*os.File, error) {
 		logFilePath = "webring.log"
 	}
 
-	// Ensure the directory exists
 	dir := filepath.Dir(logFilePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return nil, err
 	}
 
-	// Open the log file
-	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, filePerm)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set up multi-writer to write logs to both file and console
 	multiWriter := io.MultiWriter(os.Stdout, logFile)
 	log.SetOutput(multiWriter)
 
@@ -48,8 +56,7 @@ func setupLogging() (*os.File, error) {
 }
 
 func main() {
-	err := godotenv.Load()
-	if err != nil {
+	if err := godotenv.Load(); err != nil {
 		log.Println("Error loading .env file:", err)
 	}
 
@@ -57,73 +64,117 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to set up logging:", err)
 	}
-	defer func(logFile *os.File) {
-		err := logFile.Close()
-		if err != nil {
-			log.Fatalf("Failed to close log file: %v", err)
+	defer func() {
+		if closeErr := logFile.Close(); closeErr != nil {
+			log.Printf("Failed to close log file: %v", closeErr)
 		}
-	}(logFile)
+	}()
 
 	log.Println("Logging initialized. Log file:", logFile.Name())
 
 	db, err := database.Connect()
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		log.Printf("Failed to connect to database: %v", err)
+		return
 	}
-	defer func(db *sql.DB) {
-		err := db.Close()
-		if err != nil {
-			log.Fatalf("Failed to close database connection: %v", err)
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("Failed to close database connection: %v", err)
 		}
-	}(db)
+	}()
+
+	startBackgroundServices(db)
+
+	r := mux.NewRouter()
+	registerHandlers(r, db)
+
+	setupStaticFiles(r)
+	setupMediaDirectory(r)
+	templates := parseTemplates()
+	initializeTemplates(templates)
+
+	startServer(r)
+}
+
+func startBackgroundServices(db *sql.DB) {
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			auth.CleanExpiredSessions(db)
+		}
+	}()
 
 	checker := uptime.NewChecker(db)
 	go checker.Start()
+}
 
-	r := mux.NewRouter()
+func registerHandlers(r *mux.Router, db *sql.DB) {
 	dashboard.RegisterHandlers(r, db)
+	dashboard.RegisterSuperAdminHandlers(r, db)
+	user.RegisterHandlers(r, db)
+	public.RegisterSubmissionHandlers(r, db)
 	api.RegisterHandlers(r, db)
+	api.RegisterSwaggerHandlers(r)
 
-	// Serve static files
+	public.RegisterHandlers(r, db)
+}
+
+func setupStaticFiles(r *mux.Router) {
 	staticFiles, err := fs.Sub(webring.Files, "static")
 	if err != nil {
 		log.Fatalf("Error accessing static files: %v", err)
 	}
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.FS(staticFiles))))
+}
 
-	// Parse templates
-	t, err := template.ParseFS(webring.Files, "internal/dashboard/templates/*.html", "internal/public/templates/*.html")
+func parseTemplates() *template.Template {
+	t, err := template.ParseFS(webring.Files,
+		"internal/dashboard/templates/*.html",
+		"internal/public/templates/*.html",
+		"internal/user/templates/*.html")
 	if err != nil {
 		log.Fatalf("Error parsing templates: %v", err)
 	}
+	return t
+}
 
-	// Initialize dashboard templates
+func initializeTemplates(t *template.Template) {
 	dashboard.InitTemplates(t)
-
-	// Initialize public templates
 	public.InitTemplates(t)
+	user.InitTemplates(t)
+}
 
+func setupMediaDirectory(r *mux.Router) {
 	mediaFolder := os.Getenv("MEDIA_FOLDER")
 	if mediaFolder == "" {
 		mediaFolder = "media"
 	}
-	err = os.MkdirAll(mediaFolder, os.ModePerm)
-	if err != nil {
-		return
+
+	if err := os.MkdirAll(mediaFolder, os.ModePerm); err != nil {
+		log.Fatalf("Failed to create media folder: %v", err)
 	}
 
-	// Serve media files
 	r.PathPrefix("/media/").Handler(http.StripPrefix("/media/", http.FileServer(http.Dir(mediaFolder))))
+}
 
-	// Register public handlers
-	public.RegisterHandlers(r, db)
-
+func startServer(r *mux.Router) {
 	port := os.Getenv("PORT")
 	if port == "" {
 		fmt.Println("PORT environment variable not set. Defaulting to 8080")
 		port = "8080"
 	}
 
+	server := &http.Server{
+		Addr:         ":" + port,
+		Handler:      r,
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
+		IdleTimeout:  serverIdleTimeout,
+	}
+
 	log.Printf("Starting server on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, r))
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatal("Server failed to start:", err)
+	}
 }

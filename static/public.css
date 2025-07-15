@@ -51,3 +51,169 @@ li .favicon-fallback {
     background: var(--color-gray-900);
     border-radius: 2px;
 }
+
+.user-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-primary-900);
+    font-size: 0.875rem;
+}
+
+.user-actions {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.user-action {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--color-primary-900);
+    color: var(--color-primary-100);
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    border: none;
+    cursor: pointer;
+}
+
+.user-action:hover {
+    background: var(--color-primary-950);
+    transform: translateY(-1px);
+}
+
+.user-action.admin {
+    background: var(--color-green-700);
+}
+
+.user-action.admin:hover {
+    background: var(--color-green-700);
+    opacity: 0.9;
+}
+
+.user-action.docs {
+    background: var(--color-gray-600);
+}
+
+.user-action.docs:hover {
+    background: var(--color-gray-400);
+}
+
+.user-action.logout {
+    background: var(--color-red-700);
+}
+
+.user-action.logout:hover {
+    background: var(--color-red-700);
+    opacity: 0.9;
+}
+
+.user-action i {
+    font-size: 0.875rem;
+}
+
+/* Override form hiding for logout */
+.user-actions form {
+    display: inline !important;
+}
+
+/* Action Section Styles */
+.action-section {
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--color-gray-900);
+}
+
+.action-section h2 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+    text-align: center;
+    color: var(--color-gray-100);
+}
+
+.action-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+}
+
+.action-card {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.25rem;
+    background: var(--color-gray-900);
+    border-radius: 8px;
+    border: 1px solid var(--color-gray-600);
+    text-decoration: none;
+    color: var(--color-gray-100);
+    transition: all 0.2s ease;
+}
+
+.action-card:hover {
+    background: var(--color-gray-600);
+    border-color: var(--color-gray-400);
+    transform: translateY(-2px);
+}
+
+.action-card-primary {
+    background: var(--color-primary-900);
+    border-color: var(--color-primary-900);
+    color: var(--color-primary-100);
+}
+
+.action-card-primary:hover {
+    background: var(--color-primary-950);
+    border-color: var(--color-primary-900);
+}
+
+.action-card i {
+    font-size: 1.5rem;
+    opacity: 0.8;
+}
+
+.action-content {
+    flex: 1;
+}
+
+.action-title {
+    font-weight: 600;
+    font-size: 1rem;
+    margin-bottom: 0.25rem;
+}
+
+.action-description {
+    font-size: 0.875rem;
+    opacity: 0.8;
+    line-height: 1.4;
+}
+
+@media (max-width: 768px) {
+    .user-bar {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: stretch;
+        text-align: center;
+    }
+
+    .user-actions {
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .action-cards {
+        grid-template-columns: 1fr;
+    }
+
+    .action-card {
+        padding: 1rem;
+    }
+}

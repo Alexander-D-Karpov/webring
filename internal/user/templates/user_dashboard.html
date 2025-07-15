@@ -1,0 +1,128 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Dashboard - Webring</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
+</head>
+<body>
+<header>
+  <div style="display: flex; justify-content: space-between; align-items: center;">
+    <h1>
+      <i class="ri-bubble-chart-fill"></i>
+      User Dashboard
+    </h1>
+    <div>
+      Welcome, {{if .User.FirstName}}{{.User.FirstName}}{{else}}{{.User.TelegramUsername}}{{end}}!
+      <form action="/logout" method="POST" style="display: inline; margin-left: 1rem;">
+        <button type="submit">Logout</button>
+      </form>
+    </div>
+  </div>
+</header>
+
+<main>
+  <h2>Your Sites</h2>
+  <table>
+    <thead>
+    <tr>
+      <th>Slug</th>
+      <th>Name</th>
+      <th>URL</th>
+      <th>Status</th>
+      <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr>
+      <td><input type="text" name="slug" placeholder="Slug" form="form-new" pattern="[a-z0-9\-]+" required></td>
+      <td><input type="text" name="name" placeholder="Name" form="form-new" required></td>
+      <td><input type="url" name="url" placeholder="URL" form="form-new" required></td>
+      <td></td>
+      <td>
+        <button type="submit" form="form-new">
+          <i class="ri-check-line"></i>
+        </button>
+        <form action="/user/sites/create" method="POST" style="display: none" id="form-new"></form>
+      </td>
+    </tr>
+    {{range .Sites}}
+    <tr>
+      <td>
+        <input type="text" name="slug" value="{{.Slug}}" form="form-{{.ID}}" pattern="[a-z0-9\-]+" required>
+      </td>
+      <td>
+        <div class="cell">
+          {{if .Favicon}}
+          <img src="/media/{{.Favicon}}" alt="" width="16" height="16">
+          {{end}}
+          <input type="text" name="name" value="{{.Name}}" form="form-{{.ID}}" required>
+        </div>
+      </td>
+      <td>
+        <div class="cell">
+          <input type="url" name="url" value="{{.URL}}" form="form-{{.ID}}" required>
+          <a href="{{.URL}}" target="_blank">
+            <i class="ri-arrow-right-up-line"></i>
+          </a>
+        </div>
+      </td>
+      <td>
+        {{if .IsUp}}
+        <span class="badge badge-success">Up</span>
+        {{else}}
+        <span class="badge badge-danger">Down</span>
+        {{end}}
+      </td>
+      <td>
+        <button type="submit" form="form-{{.ID}}">
+          <i class="ri-save-3-line"></i>
+        </button>
+        <form action="/user/sites/{{.ID}}/update" method="POST" id="form-{{.ID}}"></form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+
+  {{if .Requests}}
+  <h2>Pending Requests</h2>
+  <table>
+    <thead>
+    <tr>
+      <th>Type</th>
+      <th>Site</th>
+      <th>Changes</th>
+      <th>Created</th>
+    </tr>
+    </thead>
+    <tbody>
+    {{range .Requests}}
+    <tr>
+      <td>{{.RequestType}}</td>
+      <td>
+        {{if .Site}}
+        {{.Site.Name}} ({{.Site.Slug}})
+        {{else}}
+        New Site
+        {{end}}
+      </td>
+      <td>
+        {{range $key, $value := .ChangedFields}}
+        <strong>{{$key}}:</strong> {{$value}}<br>
+        {{end}}
+      </td>
+      <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</main>
+</body>
+</html>

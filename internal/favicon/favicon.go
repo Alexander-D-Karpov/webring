@@ -1,7 +1,8 @@
 package favicon
 
 import (
-	"crypto/md5"
+	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,7 +17,12 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
-func GetAndStoreFavicon(siteURL string, mediaFolder string, siteID int) (string, error) {
+const (
+	htmlTimeout = 5 * time.Second
+	dlTimeout   = 10 * time.Second
+)
+
+func GetAndStoreFavicon(siteURL, mediaFolder string, siteID int) (string, error) {
 	baseURL, err := url.Parse(siteURL)
 	if err != nil {
 		return "", err
@@ -54,31 +60,32 @@ func GetAndStoreFavicon(siteURL string, mediaFolder string, siteID int) (string,
 }
 
 func getFaviconFromHTML(baseURL *url.URL) (*url.URL, error) {
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), htmlTimeout)
+	defer cancel()
 
-	req, err := http.NewRequest("GET", baseURL.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", baseURL.String(), http.NoBody)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+	userAgent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+		"(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Upgrade-Insecure-Requests", "1")
 
+	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			log.Printf("Failed to close response body: %v", err)
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			log.Printf("Failed to close response body: %v", cerr)
 		}
-	}(resp.Body)
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch HTML: status code %d", resp.StatusCode)
@@ -92,9 +99,9 @@ func getFaviconFromHTML(baseURL *url.URL) (*url.URL, error) {
 	var faviconURL string
 	var exists bool
 
-	doc.Find("link[rel='icon'], link[rel='shortcut icon']").EachWithBreak(func(i int, s *goquery.Selection) bool {
+	doc.Find("link[rel='icon'], link[rel='shortcut icon']").EachWithBreak(func(_ int, s *goquery.Selection) bool {
 		faviconURL, exists = s.Attr("href")
-		return !exists // break if we found a favicon
+		return !exists
 	})
 
 	if !exists {
@@ -114,39 +121,42 @@ func getFaviconFromHTML(baseURL *url.URL) (*url.URL, error) {
 	return parsedFaviconURL, nil
 }
 
-func downloadFavicon(faviconURL *url.URL, baseURL *url.URL, mediaFolder string, siteID int) (string, error) {
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
+func downloadFavicon(faviconURL, baseURL *url.URL, mediaFolder string, siteID int) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), dlTimeout)
+	defer cancel()
 
-	req, err := http.NewRequest("GET", faviconURL.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", faviconURL.String(), http.NoBody)
 	if err != nil {
 		return "", err
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+	userAgent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+		"(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "image/webp,image/apng,image/*,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Referer", baseURL.String())
 
+	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			log.Printf("Failed to close response body: %v", err)
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			log.Printf("Failed to close response body: %v", cerr)
 		}
-	}(resp.Body)
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("failed to download favicon: status code %d", resp.StatusCode)
 	}
 
-	hasher := md5.New()
-	hasher.Write([]byte(fmt.Sprintf("%d-%s", siteID, faviconURL)))
+	hasher := sha256.New()
+	if _, hashErr := fmt.Fprintf(hasher, "%d-%s", siteID, faviconURL); hashErr != nil {
+		return "", hashErr
+	}
 	hash := hex.EncodeToString(hasher.Sum(nil))
 
 	ext := filepath.Ext(faviconURL.Path)
@@ -161,18 +171,16 @@ func downloadFavicon(faviconURL *url.URL, baseURL *url.URL, mediaFolder string, 
 	if err != nil {
 		return "", err
 	}
-	defer func(out *os.File) {
-		err := out.Close()
-		if err != nil {
-			log.Printf("Failed to close file: %v", err)
+	defer func() {
+		if cerr := out.Close(); cerr != nil {
+			log.Printf("Failed to close file: %v", cerr)
 		}
-	}(out)
+	}()
 
 	_, err = io.Copy(out, resp.Body)
 	if err != nil {
-		err := os.Remove(filePath)
-		if err != nil {
-			return "", err
+		if removeErr := os.Remove(filePath); removeErr != nil {
+			log.Printf("Failed to remove file after copy error: %v", removeErr)
 		}
 		return "", err
 	}

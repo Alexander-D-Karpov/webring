@@ -2,8 +2,9 @@ package database
 
 import (
 	"database/sql"
-	_ "github.com/lib/pq"
 	"os"
+
+	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
 func Connect() (*sql.DB, error) {

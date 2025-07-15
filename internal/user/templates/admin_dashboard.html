@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard - Webring</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
+</head>
+<body>
+<header>
+  <div style="display: flex; justify-content: space-between; align-items: center;">
+    <h1>
+      <i class="ri-bubble-chart-fill"></i>
+      Admin Dashboard
+    </h1>
+    <div>
+      <a href="/admin/users">Manage Users</a> |
+      <a href="/admin">Site Management</a> |
+      <form action="/logout" method="POST" style="display: inline; margin-left: 1rem;">
+        <button type="submit">Logout</button>
+      </form>
+    </div>
+  </div>
+</header>
+
+<main>
+  <h2>Pending Requests</h2>
+  {{if .Requests}}
+  <table>
+    <thead>
+    <tr>
+      <th>User</th>
+      <th>Type</th>
+      <th>Site</th>
+      <th>Changes</th>
+      <th>Created</th>
+      <th>Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    {{range .Requests}}
+    <tr>
+      <td>
+        {{if .User.FirstName}}{{.User.FirstName}}{{end}}
+        {{if .User.LastName}} {{.User.LastName}}{{end}}
+        {{if .User.TelegramUsername}}(@{{.User.TelegramUsername}}){{end}}
+      </td>
+      <td>{{.RequestType}}</td>
+      <td>
+        {{if .Site}}
+        {{.Site.Name}} ({{.Site.Slug}})
+        {{else}}
+        New Site
+        {{end}}
+      </td>
+      <td>
+        {{range $key, $value := .ChangedFields}}
+        <strong>{{$key}}:</strong> {{$value}}<br>
+        {{end}}
+      </td>
+      <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+      <td>
+        <form action="/admin/requests/{{.ID}}/approve" method="POST" style="display: inline;">
+          <button type="submit" style="background: var(--color-green-700);">
+            <i class="ri-check-line"></i>
+          </button>
+        </form>
+        <form action="/admin/requests/{{.ID}}/reject" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to reject this request?')">
+          <button type="submit" style="background: var(--color-red-700);">
+            <i class="ri-close-line"></i>
+          </button>
+        </form>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p>No pending requests.</p>
+  <div style="margin-top: 2rem;">
+    <a href="/admin" style="display: inline-block; padding: 0.75rem 1.5rem; background: var(--color-primary-900); color: var(--color-primary-100); text-decoration: none; border-radius: 4px; font-weight: 500;">
+      <i class="ri-arrow-left-line"></i>
+      Back to Site Management
+    </a>
+  </div>
+  {{end}}
+</main>
+</body>
+</html>

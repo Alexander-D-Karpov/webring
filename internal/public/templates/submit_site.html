@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Submit Site - Webring</title>
+  <link rel="stylesheet" href="/static/public.css">
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
+</head>
+<body>
+<header>
+  <h1>
+    <i class="ri-bubble-chart-fill"></i>
+    Submit Your Site
+  </h1>
+</header>
+<main>
+  <form action="/submit" method="POST" style="max-width: 400px; margin: 0 auto;">
+    <div style="margin-bottom: 1rem;">
+      <label for="slug">Slug (unique identifier):</label>
+      <input type="text" id="slug" name="slug" pattern="[a-z0-9-]{3,50}" required
+             placeholder="my-awesome-site" style="width: 100%; padding: 0.5rem; margin-top: 0.5rem;">
+      <small style="color: var(--color-gray-400);">Only lowercase letters, numbers, and hyphens. 3-50 characters.</small>
+    </div>
+
+    <div style="margin-bottom: 1rem;">
+      <label for="name">Site Name:</label>
+      <input type="text" id="name" name="name" required
+             placeholder="My Awesome Site" style="width: 100%; padding: 0.5rem; margin-top: 0.5rem;">
+    </div>
+
+    <div style="margin-bottom: 1rem;">
+      <label for="url">Site URL:</label>
+      <input type="url" id="url" name="url" required
+             placeholder="https://example.com" style="width: 100%; padding: 0.5rem; margin-top: 0.5rem;">
+    </div>
+
+    <div style="margin-bottom: 1rem;">
+      <label for="telegram_username">Your Telegram Username:</label>
+      <input type="text" id="telegram_username" name="telegram_username" required
+             placeholder="username" style="width: 100%; padding: 0.5rem; margin-top: 0.5rem;">
+      <small style="color: var(--color-gray-400);">
+        Enter your Telegram username (without @). If you don't have an account, one will be created for you.
+        You can later <a href="/login">login with Telegram</a> to manage your sites.
+      </small>
+    </div>
+
+    <button type="submit" style="width: 100%; padding: 0.75rem; background: var(--color-primary-900); color: white; border: none; border-radius: 4px; cursor: pointer;">
+      Submit Site for Review
+    </button>
+  </form>
+
+  <p style="text-align: center; margin-top: 2rem; color: var(--color-gray-400);">
+    <a href="/">← Back to site listing</a>
+  </p>
+</main>
+</body>
+</html>

@@ -10,61 +10,160 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
 </head>
 <body>
-<header>
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h1>
-            <i class="ri-bubble-chart-fill"></i>
-            Users Management
-        </h1>
-        <div>
-            <a href="/admin/requests">← Back to Admin Dashboard</a>
+<header class="admin-header">
+    <div class="header-content">
+        <div class="header-left">
+            <a href="/admin" class="logo-link">
+                <div class="logo">
+                    <i class="ri-bubble-chart-fill"></i>
+                    <span class="logo-text">Webring</span>
+                </div>
+            </a>
+            <div class="page-info">
+                <h1>User Management</h1>
+            </div>
+        </div>
+        <div class="header-right">
+            <nav class="header-nav">
+                <a href="/admin" class="nav-item">
+                    <i class="ri-settings-line"></i>
+                    <span>Sites</span>
+                </a>
+                <a href="/admin/requests" class="nav-item">
+                    <i class="ri-shield-user-line"></i>
+                    <span>Requests</span>
+                </a>
+                <a href="/admin/users" class="nav-item active">
+                    <i class="ri-user-settings-line"></i>
+                    <span>Users</span>
+                </a>
+                <div class="nav-divider"></div>
+                <a href="/" class="nav-item secondary">
+                    <i class="ri-global-line"></i>
+                    <span>Public</span>
+                </a>
+                <a href="/docs/" class="nav-item secondary">
+                    <i class="ri-book-line"></i>
+                    <span>API</span>
+                </a>
+                {{if ne .CurrentUser.ID -1}}
+                <form action="/logout" method="POST" style="display: inline;">
+                    <button type="submit" class="nav-item logout-btn">
+                        <i class="ri-logout-circle-line"></i>
+                        <span>Logout</span>
+                    </button>
+                </form>
+                {{end}}
+            </nav>
         </div>
     </div>
 </header>
 
 <main>
-    <table>
-        <thead>
-        <tr>
-            <th>ID</th>
-            <th>Name</th>
-            <th>Telegram Username</th>
-            <th>Telegram ID</th>
-            <th>Admin</th>
-            <th>Created</th>
-            <th>Actions</th>
-        </tr>
-        </thead>
-        <tbody>
+    {{if eq .CurrentUser.ID -1}}
+    <div class="notice-card">
+        <div class="notice-icon">
+            <i class="ri-information-line"></i>
+        </div>
+        <div class="notice-content">
+            <div class="notice-title">Basic Authentication Access</div>
+            <div class="notice-text">
+                You are accessing user management via basic authentication.
+            </div>
+        </div>
+    </div>
+    {{end}}
+
+    <div class="users-grid">
         {{range .Users}}
-        <tr>
-            <td>{{.ID}}</td>
-            <td>
-                {{if .FirstName}}{{.FirstName}}{{end}}
-                {{if .LastName}} {{.LastName}}{{end}}
-            </td>
-            <td>{{if .TelegramUsername}}@{{.TelegramUsername}}{{end}}</td>
-            <td>{{if ne .TelegramID 0}}{{.TelegramID}}{{else}}<em>Not set</em>{{end}}</td>
-            <td>
-                {{if .IsAdmin}}
-                <span class="badge badge-success">Yes</span>
-                {{else}}
-                <span class="badge badge-danger">No</span>
-                {{end}}
-            </td>
-            <td>{{.CreatedAt.Format "15:04 02.01.2006"}}</td>
-            <td>
+        <div class="user-card {{if .IsAdmin}}admin{{end}}">
+            <div class="user-header">
+                <div class="user-avatar-lg">
+                    {{if .IsAdmin}}
+                    <i class="ri-shield-user-fill"></i>
+                    {{else}}
+                    <i class="ri-user-line"></i>
+                    {{end}}
+                </div>
+                <div class="user-info-lg">
+                    <div class="user-name-lg">
+                        {{if .FirstName}}{{.FirstName}}{{end}}
+                        {{if .LastName}} {{.LastName}}{{end}}
+                        {{if not .FirstName}}{{if not .LastName}}
+                        <span class="user-name-fallback">Unnamed User</span>
+                        {{end}}{{end}}
+                    </div>
+                    <div class="user-meta">
+                        {{if .TelegramUsername}}
+                        <span class="user-handle">@{{.TelegramUsername}}</span>
+                        {{end}}
+                        <span class="user-id">ID: {{.ID}}</span>
+                    </div>
+                </div>
+                <div class="user-role-badge">
+                    {{if .IsAdmin}}
+                    <span class="role-badge admin">
+                        <i class="ri-shield-check-fill"></i>
+                        Admin
+                    </span>
+                    {{else}}
+                    <span class="role-badge user">
+                        <i class="ri-user-line"></i>
+                        User
+                    </span>
+                    {{end}}
+                </div>
+            </div>
+
+            <div class="user-details">
+                <div class="detail-item">
+                    <span class="detail-label">Telegram ID:</span>
+                    <span class="detail-value">
+                        {{if ne .TelegramID 0}}{{.TelegramID}}{{else}}<em>Not set</em>{{end}}
+                    </span>
+                </div>
+                <div class="detail-item">
+                    <span class="detail-label">Joined:</span>
+                    <span class="detail-value">{{.CreatedAt.Format "Jan 2, 2006"}}</span>
+                </div>
+            </div>
+
+            <div class="user-actions">
                 {{if ne .ID $.CurrentUser.ID}}
-                <button type="submit" form="form-{{.ID}}" onclick="return confirm('Are you sure you want to change this user\'s admin status? This will log them out.')">
-                    {{if .IsAdmin}}Remove Admin{{else}}Make Admin{{end}}
+                <button type="submit" form="form-{{.ID}}" class="btn {{if .IsAdmin}}btn-warning{{else}}btn-success{{end}} btn-block" onclick="return confirm('Are you sure you want to change this user\'s admin status? This will log them out.')">
+                    {{if .IsAdmin}}
+                    <i class="ri-shield-cross-line"></i>
+                    Remove Admin
+                    {{else}}
+                    <i class="ri-shield-user-line"></i>
+                    Make Admin
+                    {{end}}
                 </button>
                 <form action="/admin/users/{{.ID}}/toggle-admin" method="POST" id="form-{{.ID}}"></form>
+                {{else}}
+                <div class="self-indicator">
+                    <i class="ri-user-star-line"></i>
+                    <span>This is you</span>
+                </div>
                 {{end}}
-            </td>
-        </tr>
+            </div>
+        </div>
+        {{else}}
+        <div class="empty-state">
+            <div class="empty-icon">
+                <i class="ri-user-add-line"></i>
+            </div>
+            <div class="empty-title">No Users Found</div>
+            <div class="empty-description">Users are created when they first log in via Telegram.</div>
+            <div class="empty-actions">
+                <a href="/login" class="btn btn-primary">
+                    <i class="ri-telegram-line"></i>
+                    Login with Telegram
+                </a>
+            </div>
+        </div>
         {{end}}
-        </tbody>
-    </table>
+    </div>
 </main>
 </body>
 </html>

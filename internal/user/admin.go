@@ -9,7 +9,8 @@ import (
 	"os"
 	"strconv"
 
-	"webring/internal/dashboard"
+	"webring/internal/telegram"
+
 	"webring/internal/favicon"
 	"webring/internal/models"
 
@@ -45,47 +46,6 @@ func adminDashboardHandler(db *sql.DB) http.HandlerFunc {
 
 		if err = t.ExecuteTemplate(w, "admin_dashboard.html", data); err != nil {
 			log.Printf("Error rendering admin dashboard template: %v", err)
-			http.Error(w, "Error rendering template", http.StatusInternalServerError)
-			return
-		}
-	}
-}
-
-func usersManagementHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		users, err := getAllUsers(db)
-		if err != nil {
-			log.Printf("Error fetching users: %v", err)
-			http.Error(w, "Error fetching users", http.StatusInternalServerError)
-			return
-		}
-
-		currentUser := GetUserFromContext(r.Context())
-		if currentUser == nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		data := struct {
-			CurrentUser *models.User
-			Users       []models.User
-		}{
-			CurrentUser: currentUser,
-			Users:       users,
-		}
-
-		templatesMu.RLock()
-		t := templates
-		templatesMu.RUnlock()
-
-		if t == nil {
-			log.Println("Templates not initialized")
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
-		if err = t.ExecuteTemplate(w, "users_management.html", data); err != nil {
-			log.Printf("Error rendering users management template: %v", err)
 			http.Error(w, "Error rendering template", http.StatusInternalServerError)
 			return
 		}
@@ -200,63 +160,6 @@ func moveSiteToPositionHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-func approveRequestHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user := GetUserFromContext(r.Context())
-		if user == nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		requestIDStr := mux.Vars(r)["id"]
-		requestID, err := strconv.Atoi(requestIDStr)
-		if err != nil {
-			http.Error(w, "Invalid request ID", http.StatusBadRequest)
-			return
-		}
-
-		var req models.UpdateRequest
-		var changedFieldsJSON []byte
-		err = db.QueryRow(`
-			SELECT user_id, site_id, request_type, changed_fields
-			FROM update_requests WHERE id = $1
-		`, requestID).Scan(&req.UserID, &req.SiteID, &req.RequestType, &changedFieldsJSON)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				http.Error(w, "Request not found", http.StatusNotFound)
-			} else {
-				log.Printf("Error fetching request: %v", err)
-				http.Error(w, "Error fetching request", http.StatusInternalServerError)
-			}
-			return
-		}
-
-		if err = json.Unmarshal(changedFieldsJSON, &req.ChangedFields); err != nil {
-			log.Printf("Error unmarshaling changed fields: %v", err)
-			http.Error(w, "Error processing request", http.StatusInternalServerError)
-			return
-		}
-
-		if req.RequestType == "create" {
-			err = createSiteFromRequest(db, &req)
-		} else {
-			err = updateSiteFromRequest(db, &req)
-		}
-
-		if err != nil {
-			log.Printf("Error applying request: %v", err)
-			http.Error(w, "Error applying changes", http.StatusInternalServerError)
-			return
-		}
-
-		if _, err = db.Exec("DELETE FROM update_requests WHERE id = $1", requestID); err != nil {
-			log.Printf("Error deleting request: %v", err)
-		}
-
-		http.Redirect(w, r, "/admin/requests", http.StatusSeeOther)
-	}
-}
-
 func rejectRequestHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := GetUserFromContext(r.Context())
@@ -279,40 +182,6 @@ func rejectRequestHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		http.Redirect(w, r, "/admin/requests", http.StatusSeeOther)
-	}
-}
-
-func toggleAdminHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		user := GetUserFromContext(r.Context())
-		if user == nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		userIDStr := mux.Vars(r)["id"]
-		userID, err := strconv.Atoi(userIDStr)
-		if err != nil {
-			http.Error(w, "Invalid user ID", http.StatusBadRequest)
-			return
-		}
-
-		if userID == user.ID {
-			http.Error(w, "Cannot modify your own admin status", http.StatusForbidden)
-			return
-		}
-
-		if err = dashboard.ClearUserSessions(db, userID); err != nil {
-			log.Printf("Warning: Failed to clear sessions for user %d: %v", userID, err)
-		}
-
-		if _, err = db.Exec("UPDATE users SET is_admin = NOT is_admin WHERE id = $1", userID); err != nil {
-			log.Printf("Error toggling admin status: %v", err)
-			http.Error(w, "Error updating user", http.StatusInternalServerError)
-			return
-		}
-
-		http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 	}
 }
 
@@ -376,6 +245,81 @@ func getAllRequests(db *sql.DB) ([]models.UpdateRequest, error) {
 	}
 
 	return requests, nil
+}
+
+func approveRequestHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user := GetUserFromContext(r.Context())
+		if user == nil {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		requestIDStr := mux.Vars(r)["id"]
+		requestID, err := strconv.Atoi(requestIDStr)
+		if err != nil {
+			http.Error(w, "Invalid request ID", http.StatusBadRequest)
+			return
+		}
+
+		var req models.UpdateRequest
+		var changedFieldsJSON []byte
+		var userTgID sql.NullInt64
+		var userTgUsername, userFirstName, userLastName sql.NullString
+		err = db.QueryRow(`
+			SELECT ur.user_id, ur.site_id, ur.request_type, ur.changed_fields,
+			       u.telegram_id, u.telegram_username, u.first_name, u.last_name
+			FROM update_requests ur
+			JOIN users u ON ur.user_id = u.id
+			WHERE ur.id = $1
+		`, requestID).Scan(&req.UserID, &req.SiteID, &req.RequestType, &changedFieldsJSON,
+			&userTgID, &userTgUsername, &userFirstName, &userLastName)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				http.Error(w, "Request not found", http.StatusNotFound)
+			} else {
+				log.Printf("Error fetching request: %v", err)
+				http.Error(w, "Error fetching request", http.StatusInternalServerError)
+			}
+			return
+		}
+
+		if err = json.Unmarshal(changedFieldsJSON, &req.ChangedFields); err != nil {
+			log.Printf("Error unmarshaling changed fields: %v", err)
+			http.Error(w, "Error processing request", http.StatusInternalServerError)
+			return
+		}
+
+		if req.RequestType == "create" {
+			err = createSiteFromRequest(db, &req)
+		} else {
+			err = updateSiteFromRequest(db, &req)
+		}
+
+		if err != nil {
+			log.Printf("Error applying request: %v", err)
+			http.Error(w, "Error applying changes", http.StatusInternalServerError)
+			return
+		}
+
+		if _, err = db.Exec("DELETE FROM update_requests WHERE id = $1", requestID); err != nil {
+			log.Printf("Error deleting request: %v", err)
+		}
+
+		go func() {
+			if userTgID.Valid && userTgID.Int64 != 0 {
+				userForNotification := &models.User{
+					TelegramID:       userTgID.Int64,
+					TelegramUsername: &userTgUsername.String,
+					FirstName:        &userFirstName.String,
+					LastName:         &userLastName.String,
+				}
+				telegram.NotifyUserOfApprovedRequest(&req, userForNotification)
+			}
+		}()
+
+		http.Redirect(w, r, "/admin/requests", http.StatusSeeOther)
+	}
 }
 
 func getAllUsers(db *sql.DB) ([]models.User, error) {

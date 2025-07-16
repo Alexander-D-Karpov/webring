@@ -10,123 +10,179 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
 </head>
 <body>
-<header>
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <a href="/admin">
-            <h1>
-                <i class="ri-bubble-chart-fill"></i>
-                Webring Dashboard
-            </h1>
-        </a>
-        <div>
-            <a href="/admin/requests">Admin Requests</a> |
-            <a href="/admin/users">Manage Users</a> |
-            <a href="/">View Public Site</a>
+<header class="admin-header">
+    <div class="header-content">
+        <div class="header-left">
+            <a href="/admin" class="logo-link">
+                <div class="logo">
+                    <i class="ri-bubble-chart-fill"></i>
+                    <span class="logo-text">Webring</span>
+                </div>
+            </a>
+            <div class="page-info">
+                <h1>Site Management</h1>
+            </div>
+        </div>
+        <div class="header-right">
+            <nav class="header-nav">
+                <a href="/admin" class="nav-item active">
+                    <i class="ri-settings-line"></i>
+                    <span>Sites</span>
+                </a>
+                <a href="/admin/requests" class="nav-item">
+                    <i class="ri-shield-user-line"></i>
+                    <span>Requests</span>
+                </a>
+                <a href="/admin/users" class="nav-item">
+                    <i class="ri-user-settings-line"></i>
+                    <span>Users</span>
+                </a>
+                <div class="nav-divider"></div>
+                <a href="/" class="nav-item secondary">
+                    <i class="ri-global-line"></i>
+                    <span>Public</span>
+                </a>
+                <a href="/docs/" class="nav-item secondary">
+                    <i class="ri-book-line"></i>
+                    <span>API</span>
+                </a>
+            </nav>
         </div>
     </div>
 </header>
+
 <main>
-    <table>
-        <thead>
-        <tr>
-            <th>ID</th>
-            <th>Slug</th>
-            <th>Name</th>
-            <th>URL</th>
-            <th>Telegram</th>
-            <th>Status</th>
-            <th>Ping</th>
-            <th>Actions</th>
-        </tr>
-        </thead>
-        <tbody>
-        <tr>
-            <td><input type="number" name="id" placeholder="ID" form="form-new" required></td>
-            <td><input type="text" name="slug" placeholder="Slug" form="form-new" pattern="[a-z0-9\-]+" required></td>
-            <td><input type="text" name="name" placeholder="Name" form="form-new" required></td>
-            <td><input type="url" name="url" placeholder="URL" form="form-new" required></td>
-            <td>
-                <div class="cell">
-                    <span>@</span>
-                    <input type="text" name="telegram_username" placeholder="username" form="form-new">
-                </div>
-            </td>
-            <td></td>
-            <td></td>
-            <td>
-                <button type="submit" form="form-new">
-                    <i class="ri-check-line"></i>
-                </button>
-                <form action="/admin/add" method="POST" style="display: none" id="form-new"></form>
-            </td>
-        </tr>
-        {{range .}}
-        <tr>
-            <td>
-                {{.ID}}
-                <form action="/admin/reorder/{{.ID}}/up" method="POST" style="display: contents">
-                    <button type="submit">
-                        <i class="ri-arrow-up-s-line"></i>
-                    </button>
-                </form>
-                <form action="/admin/reorder/{{.ID}}/down" method="POST" style="display: contents">
-                    <button type="submit">
-                        <i class="ri-arrow-down-s-line"></i>
-                    </button>
-                </form>
-            </td>
-            <td>
-                <div class="cell">
-                    <input type="text" name="slug" value="{{.Slug}}" form="form-{{.ID}}" pattern="[a-z0-9\-]+" required>
-                </div>
-            </td>
-            <td>
-                <div class="cell">
-                    {{if .Favicon}}
-                    <img src="/media/{{.Favicon}}" alt="" width="16" height="16" style="margin-left: 0.5rem">
-                    {{end}}
-                    <input type="text" name="name" value="{{.Name}}" form="form-{{.ID}}" required>
-                </div>
-            </td>
-            <td>
-                <div class="cell">
-                    <input type="url" name="url" value="{{.URL}}" form="form-{{.ID}}" required>
-                    <a href="{{.URL}}" target="_blank">
-                        <i class="ri-arrow-right-up-line"></i>
-                    </a>
-                </div>
-            </td>
-            <td>
-                <div class="cell">
-                    <span>@</span>
-                    <input type="text" name="telegram_username" value="{{if .TelegramUsername}}{{.TelegramUsername}}{{end}}" form="form-{{.ID}}" placeholder="username">
-                </div>
-            </td>
-            <td>
-                {{if .IsUp}}
-                <span class="badge badge-success">Up</span>
-                {{else}}
-                <span class="badge badge-danger">Down</span>
-                {{end}}
-            </td>
-            <td>{{.LastCheck}}</td>
-            <td>
-                <div class="cell">
-                    <button type="submit" form="form-{{.ID}}">
-                        <i class="ri-save-3-line"></i>
-                    </button>
-                    <form action="/admin/update/{{.ID}}" method="POST" id="form-{{.ID}}"></form>
-                    <form action="/admin/remove/{{.ID}}" method="POST" style="display: contents" onsubmit="return confirm('Are you sure you want to delete this site?')">
-                        <button type="submit">
-                            <i class="ri-delete-bin-line"></i>
+    <div class="table-wrapper">
+        <table>
+            <thead>
+            <tr>
+                <th class="col-order">ID</th>
+                <th class="col-slug">SLUG</th>
+                <th class="col-name">NAME</th>
+                <th class="col-url">URL</th>
+                <th class="col-telegram">TELEGRAM</th>
+                <th class="col-status">STATUS</th>
+                <th class="col-ping">PING</th>
+                <th class="col-actions">ACTIONS</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr class="row-add-new">
+                <td>
+                    <input type="number" name="id" placeholder="ID" form="form-new" required>
+                </td>
+                <td>
+                    <input type="text" name="slug" placeholder="site-slug" form="form-new" pattern="[a-z0-9\-]+" required>
+                </td>
+                <td>
+                    <input type="text" name="name" placeholder="Site Name" form="form-new" required>
+                </td>
+                <td>
+                    <input type="url" name="url" placeholder="https://example.com" form="form-new" required>
+                </td>
+                <td>
+                    <div class="cell telegram-cell">
+                        <span class="prefix">@</span>
+                        <input type="text" name="telegram_username" placeholder="username" form="form-new">
+                    </div>
+                </td>
+                <td>
+                    <span class="status-badge new">New</span>
+                </td>
+                <td></td>
+                <td>
+                    <div class="actions">
+                        <button type="submit" form="form-new" class="btn btn-primary btn-sm">
+                            <i class="ri-check-line"></i>
                         </button>
-                    </form>
-                </div>
-            </td>
-        </tr>
-        {{end}}
-        </tbody>
-    </table>
+                    </div>
+                    <form action="/admin/add" method="POST" style="display: none" id="form-new"></form>
+                </td>
+            </tr>
+            {{range .}}
+            <tr class="row-site">
+                <td>
+                    <div class="order-controls">
+                        <span class="order-number">{{.ID}}</span>
+                        <div class="order-actions">
+                            <form action="/admin/reorder/{{.ID}}/up" method="POST">
+                                <button type="submit" class="btn-order">
+                                    <i class="ri-arrow-up-s-line"></i>
+                                </button>
+                            </form>
+                            <form action="/admin/reorder/{{.ID}}/down" method="POST">
+                                <button type="submit" class="btn-order">
+                                    <i class="ri-arrow-down-s-line"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </td>
+                <td>
+                    <input type="text" name="slug" value="{{.Slug}}" form="form-{{.ID}}" pattern="[a-z0-9\-]+" required>
+                </td>
+                <td>
+                    <div class="cell name-cell">
+                        {{if .Favicon}}
+                        <img src="/media/{{.Favicon}}" alt="{{.Name}}" class="favicon">
+                        {{else}}
+                        <div class="favicon-placeholder">
+                            <i class="ri-global-line"></i>
+                        </div>
+                        {{end}}
+                        <input type="text" name="name" value="{{.Name}}" form="form-{{.ID}}" required>
+                    </div>
+                </td>
+                <td>
+                    <div class="cell url-cell">
+                        <input type="url" name="url" value="{{.URL}}" form="form-{{.ID}}" required>
+                        <a href="{{.URL}}" target="_blank" class="external-link">
+                            <i class="ri-arrow-right-up-line"></i>
+                        </a>
+                    </div>
+                </td>
+                <td>
+                    <div class="cell telegram-cell">
+                        <span class="prefix">@</span>
+                        {{if .TelegramUsername}}
+                        <input type="text" name="telegram_username" value="{{.TelegramUsername}}" form="form-{{.ID}}" placeholder="username">
+                        {{else}}
+                        <input type="text" name="telegram_username" value="" form="form-{{.ID}}" placeholder="username" class="empty-value">
+                        {{end}}
+                    </div>
+                </td>
+                <td>
+                    {{if .IsUp}}
+                    <span class="status-badge up">UP</span>
+                    {{else}}
+                    <span class="status-badge down">DOWN</span>
+                    {{end}}
+                </td>
+                <td class="ping-cell">
+                    {{if .LastCheck}}
+                    <span class="ping-value">{{.LastCheck}}</span>
+                    {{else}}
+                    <span class="ping-empty">—</span>
+                    {{end}}
+                </td>
+                <td>
+                    <div class="actions">
+                        <button type="submit" form="form-{{.ID}}" class="btn btn-primary btn-sm">
+                            <i class="ri-save-3-line"></i>
+                        </button>
+                        <form action="/admin/update/{{.ID}}" method="POST" id="form-{{.ID}}"></form>
+                        <form action="/admin/remove/{{.ID}}" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this site?')">
+                            <button type="submit" class="btn btn-danger btn-sm">
+                                <i class="ri-delete-bin-line"></i>
+                            </button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+    </div>
 </main>
 </body>
 </html>

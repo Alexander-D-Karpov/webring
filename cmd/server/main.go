@@ -111,7 +111,6 @@ func startBackgroundServices(db *sql.DB) {
 
 func registerHandlers(r *mux.Router, db *sql.DB) {
 	dashboard.RegisterHandlers(r, db)
-	dashboard.RegisterSuperAdminHandlers(r, db)
 	user.RegisterHandlers(r, db)
 	public.RegisterSubmissionHandlers(r, db)
 	api.RegisterHandlers(r, db)
@@ -129,7 +128,17 @@ func setupStaticFiles(r *mux.Router) {
 }
 
 func parseTemplates() *template.Template {
-	t, err := template.ParseFS(webring.Files,
+	funcMap := template.FuncMap{
+		"add": func(a, b int) int {
+			return a + b
+		},
+		"sub": func(a, b int) int {
+			return a - b
+		},
+	}
+
+	t := template.New("").Funcs(funcMap)
+	t, err := t.ParseFS(webring.Files,
 		"internal/dashboard/templates/*.html",
 		"internal/public/templates/*.html",
 		"internal/user/templates/*.html")

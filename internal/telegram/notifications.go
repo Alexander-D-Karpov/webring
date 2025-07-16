@@ -196,3 +196,31 @@ func sendTelegramMessage(botToken string, chatID int64, text string) {
 		log.Printf("Successfully sent Telegram notification to admin %d", chatID)
 	}
 }
+
+func NotifyUserOfApprovedRequest(request *models.UpdateRequest, user *models.User) {
+	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	if botToken == "" || user.TelegramID == 0 {
+		return
+	}
+
+	var message string
+	switch request.RequestType {
+	case "create":
+		siteName := "Your site"
+		if name, ok := request.ChangedFields["name"].(string); ok {
+			siteName = name
+		}
+		message = fmt.Sprintf("*Request Approved*\n\nYour site submission has been approved!\n\n"+
+			"*Site:* %s\n\nYour site is now part of the webring.", siteName)
+	case "update":
+		message = "*Update Approved*\n\nYour site update request has been approved and the changes have been applied."
+		if len(request.ChangedFields) > 0 {
+			message += "\n\n*Applied changes:*\n"
+			for field, value := range request.ChangedFields {
+				message += fmt.Sprintf("• *%s:* %v\n", field, value)
+			}
+		}
+	}
+
+	sendTelegramMessage(botToken, user.TelegramID, message)
+}

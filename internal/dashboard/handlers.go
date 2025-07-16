@@ -76,18 +76,6 @@ func RegisterHandlers(r *mux.Router, db *sql.DB) {
 	adminRouter.HandleFunc("/move/{id}/{position}", moveSiteHandler(db)).Methods("POST")
 }
 
-func basicAuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != os.Getenv("DASHBOARD_USER") || pass != os.Getenv("DASHBOARD_PASSWORD") {
-			w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 func dashboardHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		templatesMu.RLock()
@@ -308,8 +296,26 @@ func reorderSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		tx, err := db.Begin()
+		if err != nil {
+			log.Printf("Error starting transaction: %v", err)
+			http.Error(w, "Error reordering sites", http.StatusInternalServerError)
+			return
+		}
+		defer func() {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+				log.Printf("Error rolling back transaction: %v", rollbackErr)
+			}
+		}()
+
+		if err = normalizeDisplayOrder(tx); err != nil {
+			log.Printf("Error normalizing display order: %v", err)
+			http.Error(w, "Error normalizing order", http.StatusInternalServerError)
+			return
+		}
+
 		var currentOrder int
-		err = db.QueryRow("SELECT display_order FROM sites WHERE id = $1", id).Scan(&currentOrder)
+		err = tx.QueryRow("SELECT display_order FROM sites WHERE id = $1", id).Scan(&currentOrder)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				http.Error(w, "Site not found", http.StatusNotFound)
@@ -322,22 +328,86 @@ func reorderSiteHandler(db *sql.DB) http.HandlerFunc {
 
 		targetOrder := currentOrder + offset
 
-		_, err = db.Exec(`
-			UPDATE sites 
-			SET display_order = CASE 
-				WHEN id = $1 THEN $2
-				WHEN display_order = $2 THEN $3
-			END
-			WHERE id = $1 OR display_order = $2
-		`, id, targetOrder, currentOrder)
+		var minOrder, maxOrder int
+		err = tx.QueryRow("SELECT MIN(display_order), MAX(display_order) FROM sites").Scan(&minOrder, &maxOrder)
 		if err != nil {
-			log.Printf("Error reordering sites: %v", err)
+			log.Printf("Error getting order bounds: %v", err)
+			http.Error(w, "Error getting order bounds", http.StatusInternalServerError)
+			return
+		}
+
+		if targetOrder < minOrder || targetOrder > maxOrder {
+			if err = tx.Commit(); err != nil {
+				log.Printf("Error committing transaction: %v", err)
+			}
+			http.Redirect(w, r, "/admin", http.StatusSeeOther)
+			return
+		}
+
+		tempOrder := maxOrder + 1000
+		_, err = tx.Exec("UPDATE sites SET display_order = $1 WHERE id = $2", tempOrder, id)
+		if err != nil {
+			log.Printf("Error setting temporary order: %v", err)
+			http.Error(w, "Error reordering sites", http.StatusInternalServerError)
+			return
+		}
+
+		_, err = tx.Exec("UPDATE sites SET display_order = $1 WHERE display_order = $2", currentOrder, targetOrder)
+		if err != nil {
+			log.Printf("Error updating target site: %v", err)
+			http.Error(w, "Error reordering sites", http.StatusInternalServerError)
+			return
+		}
+
+		_, err = tx.Exec("UPDATE sites SET display_order = $1 WHERE id = $2", targetOrder, id)
+		if err != nil {
+			log.Printf("Error updating current site: %v", err)
+			http.Error(w, "Error reordering sites", http.StatusInternalServerError)
+			return
+		}
+
+		if err = tx.Commit(); err != nil {
+			log.Printf("Error committing transaction: %v", err)
 			http.Error(w, "Error reordering sites", http.StatusInternalServerError)
 			return
 		}
 
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 	}
+}
+
+func normalizeDisplayOrder(tx *sql.Tx) error {
+	rows, err := tx.Query("SELECT id FROM sites ORDER BY display_order, id")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("Error closing rows: %v", closeErr)
+		}
+	}()
+
+	var siteIDs []int
+	for rows.Next() {
+		var siteID int
+		if scanErr := rows.Scan(&siteID); scanErr != nil {
+			return scanErr
+		}
+		siteIDs = append(siteIDs, siteID)
+	}
+
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return rowsErr
+	}
+
+	for i, siteID := range siteIDs {
+		newOrder := i + 1
+		if _, err = tx.Exec("UPDATE sites SET display_order = $1 WHERE id = $2", newOrder, siteID); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func moveSiteHandler(db *sql.DB) http.HandlerFunc {

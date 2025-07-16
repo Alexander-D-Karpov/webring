@@ -12,6 +12,9 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
+
+	"webring/internal/telegram"
 
 	"github.com/gorilla/mux"
 	"github.com/lib/pq"
@@ -129,8 +132,8 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 		url := sanitizeURL(r.FormValue("url"))
 		telegramUsername := sanitizeInput(r.FormValue("telegram_username"))
 
-		if slug == "" || name == "" || url == "" || telegramUsername == "" {
-			http.Error(w, "All fields are required", http.StatusBadRequest)
+		if slug == "" || name == "" || url == "" {
+			http.Error(w, "Slug, Name, and URL are required", http.StatusBadRequest)
 			return
 		}
 
@@ -154,17 +157,44 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		telegramUsernameClean := strings.TrimPrefix(telegramUsername, "@")
-		if telegramUsernameClean == "" {
-			http.Error(w, "Invalid Telegram username", http.StatusBadRequest)
-			return
+		var userID *int
+		var submittingUser *models.User
+
+		if telegramUsername != "" {
+			telegramUsernameClean := strings.TrimPrefix(telegramUsername, "@")
+			if telegramUsernameClean == "" {
+				http.Error(w, "Invalid Telegram username", http.StatusBadRequest)
+				return
+			}
+
+			var err error
+			userID, err = findOrCreateUserByTelegramUsername(db, telegramUsernameClean)
+			if err != nil {
+				log.Printf("Error handling telegram username: %v", err)
+				http.Error(w, "Error processing submission", http.StatusInternalServerError)
+				return
+			}
+
+			if userID != nil {
+				var err error
+				submittingUser, err = getUserByID(db, *userID)
+				if err != nil {
+					log.Printf("Error getting user by ID: %v", err)
+				}
+			}
 		}
 
-		userID, err := findOrCreateUserByTelegramUsername(db, telegramUsernameClean)
-		if err != nil {
-			log.Printf("Error handling telegram username: %v", err)
-			http.Error(w, "Error processing submission", http.StatusInternalServerError)
-			return
+		var requestUserID int
+		if userID != nil {
+			requestUserID = *userID
+		} else {
+			var err error
+			requestUserID, err = getOrCreateAnonymousAdminUser(db)
+			if err != nil {
+				log.Printf("Error getting anonymous admin user: %v", err)
+				http.Error(w, "Error processing submission", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		changedFields := map[string]interface{}{
@@ -173,11 +203,34 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 			"url":  url,
 		}
 
-		if err = createUpdateRequest(db, *userID, nil, "create", changedFields); err != nil {
+		if err := createUpdateRequest(db, requestUserID, nil, "create", changedFields); err != nil {
 			log.Printf("Error creating submission request: %v", err)
 			http.Error(w, "Error submitting site", http.StatusInternalServerError)
 			return
 		}
+
+		go func() {
+			if submittingUser == nil {
+				submittingUser = &models.User{
+					ID: requestUserID,
+					TelegramUsername: func() *string {
+						if telegramUsername != "" {
+							clean := strings.TrimPrefix(telegramUsername, "@")
+							return &clean
+						}
+						return nil
+					}(),
+				}
+			}
+
+			req := &models.UpdateRequest{
+				UserID:        requestUserID,
+				RequestType:   "create",
+				ChangedFields: changedFields,
+				CreatedAt:     time.Now(),
+			}
+			telegram.NotifyAdminsOfNewRequest(db, req, submittingUser)
+		}()
 
 		templatesMu.RLock()
 		t := templates
@@ -188,12 +241,54 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		if err = t.ExecuteTemplate(w, "submit_success.html", nil); err != nil {
+		if err := t.ExecuteTemplate(w, "submit_success.html", nil); err != nil {
 			log.Printf("Error rendering success template: %v", err)
 			http.Error(w, "Error rendering template", http.StatusInternalServerError)
 			return
 		}
 	}
+}
+
+func getUserByID(db *sql.DB, userID int) (*models.User, error) {
+	var user models.User
+	err := db.QueryRow(`
+		SELECT id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at 
+		FROM users WHERE id = $1
+	`, userID).Scan(&user.ID, &user.TelegramID, &user.TelegramUsername,
+		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil // User not found
+		}
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+func getOrCreateAnonymousAdminUser(db *sql.DB) (int, error) {
+	var userID int
+	query := "SELECT id FROM users WHERE telegram_id IS NULL AND telegram_username IS NULL LIMIT 1"
+	err := db.QueryRow(query).Scan(&userID)
+	if err == nil {
+		return userID, nil
+	}
+
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+
+	err = db.QueryRow(`
+		INSERT INTO users (telegram_username, telegram_id) 
+		VALUES (NULL, NULL) 
+		RETURNING id
+	`).Scan(&userID)
+	if err != nil {
+		return 0, err
+	}
+
+	return userID, nil
 }
 
 func getRespondingSites(db *sql.DB) ([]models.PublicSite, error) {

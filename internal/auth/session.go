@@ -87,12 +87,14 @@ func CleanExpiredSessions(db *sql.DB) {
 }
 
 func isSecureCookieEnabled() bool {
+	// Default to true for production safety
 	if secureStr := os.Getenv("SESSION_SECURE_COOKIE"); secureStr != "" {
 		if secure, err := strconv.ParseBool(secureStr); err == nil {
 			return secure
 		}
 	}
-	return false // Default to false for development
+	// Default to true unless explicitly set to false
+	return os.Getenv("ENV") != "development"
 }
 
 func SetSessionCookie(w http.ResponseWriter, sessionID string) {

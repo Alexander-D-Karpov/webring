@@ -161,9 +161,14 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 		var submittingUser *models.User
 
 		if telegramUsername != "" {
-			telegramUsernameClean := strings.TrimPrefix(telegramUsername, "@")
-			if telegramUsernameClean == "" {
-				http.Error(w, "Invalid Telegram username", http.StatusBadRequest)
+			telegramUsernameClean := strings.TrimPrefix(strings.TrimSpace(telegramUsername), "@")
+			if matched, err := regexp.MatchString("^[a-zA-Z0-9_]{4,32}$", telegramUsernameClean); !matched {
+				if err != nil {
+					log.Printf("Error validating telegram username: %v", err)
+				} else {
+					log.Println("Invalid Telegram username format")
+				}
+				http.Error(w, "Invalid Telegram username format", http.StatusBadRequest)
 				return
 			}
 

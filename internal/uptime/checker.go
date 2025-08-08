@@ -3,6 +3,7 @@ package uptime
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -84,6 +85,26 @@ func (c *Checker) Start() {
 	}
 }
 
+func isProxyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	proxyErrors := []string{
+		"cannot connect to proxy",
+		"proxy refused connection",
+		"no route to host",
+		"proxy authentication required",
+		"bad gateway",
+	}
+	for _, proxyErr := range proxyErrors {
+		if strings.Contains(errStr, proxyErr) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Checker) checkAllSites() {
 	sites, err := c.getAllSites()
 	if err != nil {
@@ -115,9 +136,7 @@ func (c *Checker) checkAllSites() {
 					allProxyErrors = false
 				} else {
 					c.debugLogf("Site %s is down (proxy): %s", s.URL, errorMsg)
-					if !strings.Contains(errorMsg, "cannot connect to proxy") &&
-						!strings.Contains(errorMsg, "proxy refused connection") &&
-						!strings.Contains(errorMsg, "no route to host") {
+					if !isProxyError(errors.New(errorMsg)) {
 						c.debugLogf("Error for %s appears to be site-specific, not proxy-related", s.URL)
 						allProxyErrors = false
 					}

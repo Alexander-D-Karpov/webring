@@ -3,6 +3,7 @@ package dashboard
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"html/template"
 	"log"
 	"math"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 
 	"webring/internal/favicon"
@@ -76,6 +78,17 @@ func RegisterHandlers(r *mux.Router, db *sql.DB) {
 	adminRouter.HandleFunc("/move/{id}/{position}", moveSiteHandler(db)).Methods("POST")
 }
 
+func renderTemplate(w http.ResponseWriter, name string, data interface{}) error {
+	templatesMu.RLock()
+	defer templatesMu.RUnlock()
+
+	if templates == nil {
+		return fmt.Errorf("templates not initialized")
+	}
+
+	return templates.ExecuteTemplate(w, name, data)
+}
+
 func dashboardHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		templatesMu.RLock()
@@ -95,7 +108,7 @@ func dashboardHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		if err = t.ExecuteTemplate(w, "dashboard.html", sites); err != nil {
+		if err = renderTemplate(w, "dashboard.html", sites); err != nil {
 			log.Printf("Error rendering template: %v", err)
 			http.Error(w, "Error rendering template", http.StatusInternalServerError)
 			return
@@ -137,10 +150,9 @@ func addSiteHandler(db *sql.DB) http.HandlerFunc {
 
 		var userID *int
 		if telegramUsername != "" {
-			userID, err = findOrCreateUserByTelegramUsername(db, telegramUsername)
-			if err != nil {
-				log.Printf("Error handling telegram username: %v", err)
-				http.Error(w, "Error processing telegram username", http.StatusInternalServerError)
+			telegramUsernameClean := sanitizeTelegramUsername(telegramUsername)
+			if telegramUsernameClean == "" {
+				http.Error(w, "Invalid Telegram username format", http.StatusBadRequest)
 				return
 			}
 		}
@@ -303,7 +315,7 @@ func reorderSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		defer func() {
-			if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil && rollbackErr != sql.ErrTxDone {
 				log.Printf("Error rolling back transaction: %v", rollbackErr)
 			}
 		}()
@@ -534,8 +546,22 @@ func getAllSites(db *sql.DB) ([]models.Site, error) {
 	return sites, nil
 }
 
+func sanitizeTelegramUsername(username string) string {
+	username = strings.TrimPrefix(strings.TrimSpace(username), "@")
+	if matched, err := regexp.MatchString("^[a-zA-Z0-9_]{4,32}$", username); !matched {
+		if err != nil {
+			log.Printf("Error validating Telegram username: %v", err)
+		} else {
+			log.Printf("Invalid Telegram username format: %s", username)
+		}
+		return ""
+	}
+	return username
+}
+
 func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, error) {
 	var userID int
+	username = sanitizeTelegramUsername(username)
 
 	err := db.QueryRow("SELECT id FROM users WHERE telegram_username = $1", username).Scan(&userID)
 	if err == nil {

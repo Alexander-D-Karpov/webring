@@ -1,0 +1,35 @@
+version: 2
+
+secret_scanning:
+  # Paths to exclude from scanning
+  ignored_paths:
+    - '**/.env.template'
+    - '**/.env.example'
+    - '**/testdata/**'
+    - '**/test/**'
+    - '**/*_test.go'
+    - 'docs/**'
+
+  # Specific detectors to ignore
+  ignored_detectors:
+    - generic_high_entropy_secret
+
+  ignored_patterns:
+    - name: "Template environment variables"
+      pattern: 'your_bot_token|your_bot_username|example\.com'
+
+    - name: "Localhost database strings"
+      pattern: 'postgres://postgres:postgres@localhost'
+
+    - name: "Test credentials"
+      pattern: 'testuser|testpass|test_.*'
+
+additional_config:
+  high_entropy_threshold: 4.5
+  ignored_matches:
+    - match: 'TELEGRAM_BOT_TOKEN=your_bot_token'
+      reason: "Template placeholder"
+    - match: 'TELEGRAM_BOT_USERNAME=your_bot_username'
+      reason: "Template placeholder"
+    - match: 'postgres://postgres:postgres@localhost'
+      reason: "Local development database"

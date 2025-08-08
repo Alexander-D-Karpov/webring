@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Dashboard - Webring</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
+</head>
+<body>
+<header class="admin-header">
+  <div class="header-content">
+    <div class="header-left">
+      <a href="/" class="logo-link">
+        <div class="logo">
+          <i class="ri-bubble-chart-fill"></i>
+          <span class="logo-text">Webring</span>
+        </div>
+      </a>
+      <div class="page-info">
+        <h1>Dashboard</h1>
+      </div>
+    </div>
+    <div class="header-right">
+      <nav class="header-nav">
+        <a href="/user" class="nav-item active">
+          <i class="ri-dashboard-line"></i>
+          <span>Dashboard</span>
+        </a>
+        <div class="nav-divider"></div>
+        <a href="/" class="nav-item secondary">
+          <i class="ri-global-line"></i>
+          <span>Public</span>
+        </a>
+        <form action="/logout" method="POST" style="display: inline;">
+          <button type="submit" class="nav-item logout-btn">
+            <i class="ri-logout-circle-line"></i>
+            <span>Logout</span>
+          </button>
+        </form>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="content-header">
+    <div class="content-title">
+      <h2>Your Sites</h2>
+    </div>
+  </div>
+
+  <div class="table-wrapper">
+    <table>
+      <thead>
+      <tr>
+        <th>SLUG</th>
+        <th>NAME</th>
+        <th>URL</th>
+        <th>STATUS</th>
+        <th>ACTIONS</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr class="row-add-new">
+        <td>
+          <input type="text" name="slug" placeholder="site-slug" form="form-new" pattern="[a-z0-9\-]+" required>
+        </td>
+        <td>
+          <input type="text" name="name" placeholder="Site Name" form="form-new" required>
+        </td>
+        <td>
+          <input type="url" name="url" placeholder="https://example.com" form="form-new" required>
+        </td>
+        <td>
+          <span class="status-badge new">New</span>
+        </td>
+        <td>
+          <div class="actions">
+            <button type="submit" form="form-new" class="btn btn-primary btn-sm">
+              <i class="ri-check-line"></i>
+            </button>
+          </div>
+          <form action="/user/sites/create" method="POST" style="display: none" id="form-new"></form>
+        </td>
+      </tr>
+      {{range .Sites}}
+      <tr class="row-site">
+        <td>
+          <input type="text" name="slug" value="{{.Slug}}" form="form-{{.ID}}" pattern="[a-z0-9\-]+" required>
+        </td>
+        <td>
+          <div class="cell name-cell">
+            {{if .Favicon}}
+            <img src="/media/{{.Favicon}}" alt="{{.Name}}" class="favicon">
+            {{else}}
+            <div class="favicon-placeholder">
+              <i class="ri-global-line"></i>
+            </div>
+            {{end}}
+            <input type="text" name="name" value="{{.Name}}" form="form-{{.ID}}" required>
+          </div>
+        </td>
+        <td>
+          <div class="cell url-cell">
+            <input type="url" name="url" value="{{.URL}}" form="form-{{.ID}}" required>
+            <a href="{{.URL}}" target="_blank" class="external-link">
+              <i class="ri-arrow-right-up-line"></i>
+            </a>
+          </div>
+        </td>
+        <td>
+          {{if .IsUp}}
+          <span class="status-badge up">UP</span>
+          {{else}}
+          <span class="status-badge down">DOWN</span>
+          {{end}}
+        </td>
+        <td>
+          <div class="actions">
+            <button type="submit" form="form-{{.ID}}" class="btn btn-primary btn-sm">
+              <i class="ri-save-3-line"></i>
+            </button>
+          </div>
+          <form action="/user/sites/{{.ID}}/update" method="POST" id="form-{{.ID}}"></form>
+        </td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  {{if .Requests}}
+  <div class="content-header" style="margin-top: 3rem;">
+    <div class="content-title">
+      <h2>Pending Requests</h2>
+    </div>
+  </div>
+
+  <div class="requests-grid">
+    {{range .Requests}}
+    <div class="request-card {{.RequestType}}">
+      <div class="request-header">
+        <div class="request-type">
+          {{if eq .RequestType "create"}}
+          <span class="type-badge create">
+            <i class="ri-add-circle-line"></i>
+            New Site
+          </span>
+          {{else}}
+          <span class="type-badge update">
+            <i class="ri-edit-line"></i>
+            Update Site
+          </span>
+          {{end}}
+        </div>
+        <div class="request-time">
+          <i class="ri-time-line"></i>
+          {{.CreatedAt.Format "Jan 2, 15:04"}}
+        </div>
+      </div>
+
+      <div class="request-body">
+        {{if .Site}}
+        <div class="request-site">
+          <div class="site-label">Current Site:</div>
+          <div class="site-name">{{.Site.Name}}</div>
+          <div class="site-slug">{{.Site.Slug}}</div>
+        </div>
+        {{end}}
+
+        <div class="request-changes">
+          <div class="changes-label">Requested Changes:</div>
+          <div class="changes-list">
+            {{range $key, $value := .ChangedFields}}
+            <div class="change-item">
+              <span class="change-key">{{$key}}:</span>
+              <span class="change-value">{{$value}}</span>
+            </div>
+            {{end}}
+          </div>
+        </div>
+      </div>
+
+      <div class="request-status">
+        <span class="status-indicator pending">
+          <i class="ri-time-line"></i>
+          Pending Review
+        </span>
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</main>
+</body>
+</html>

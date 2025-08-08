@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard - Webring</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
+</head>
+<body>
+<header class="admin-header">
+  <div class="header-content">
+    <div class="header-left">
+      <a href="/admin" class="logo-link">
+        <div class="logo">
+          <i class="ri-bubble-chart-fill"></i>
+          <span class="logo-text">Webring</span>
+        </div>
+      </a>
+      <div class="page-info">
+        <h1>Admin Dashboard</h1>
+      </div>
+    </div>
+    <div class="header-right">
+      <nav class="header-nav">
+        <a href="/admin" class="nav-item">
+          <i class="ri-settings-line"></i>
+          <span>Sites</span>
+        </a>
+        <a href="/admin/requests" class="nav-item active">
+          <i class="ri-shield-user-line"></i>
+          <span>Requests</span>
+        </a>
+        <a href="/admin/users" class="nav-item">
+          <i class="ri-user-settings-line"></i>
+          <span>Users</span>
+        </a>
+        <div class="nav-divider"></div>
+        <a href="/" class="nav-item secondary">
+          <i class="ri-global-line"></i>
+          <span>Public</span>
+        </a>
+        <a href="/docs/" class="nav-item secondary">
+          <i class="ri-book-line"></i>
+          <span>API</span>
+        </a>
+        <form action="/logout" method="POST" style="display: inline;">
+          <button type="submit" class="nav-item logout-btn">
+            <i class="ri-logout-circle-line"></i>
+            <span>Logout</span>
+          </button>
+        </form>
+      </nav>
+    </div>
+  </div>
+</header>
+
+<main>
+  {{if .Requests}}
+  <div class="requests-grid">
+    {{range .Requests}}
+    <div class="request-card {{.RequestType}}">
+      <div class="request-header">
+        <div class="request-type">
+          {{if eq .RequestType "create"}}
+          <span class="type-badge create">
+            <i class="ri-add-circle-line"></i>
+            New Site
+          </span>
+          {{else}}
+          <span class="type-badge update">
+            <i class="ri-edit-line"></i>
+            Update Site
+          </span>
+          {{end}}
+        </div>
+        <div class="request-time">
+          <i class="ri-time-line"></i>
+          {{.CreatedAt.Format "Jan 2, 15:04"}}
+        </div>
+      </div>
+
+      <div class="request-body">
+        <div class="request-user">
+          <div class="user-avatar-sm">
+            <i class="ri-user-line"></i>
+          </div>
+          <div class="user-info-sm">
+            <span class="user-name-sm">
+              {{if .User.FirstName}}{{.User.FirstName}}{{end}}
+              {{if .User.LastName}} {{.User.LastName}}{{end}}
+              {{if not .User.FirstName}}{{if not .User.LastName}}Anonymous{{end}}{{end}}
+            </span>
+            {{if .User.TelegramUsername}}
+            <span class="user-handle">@{{.User.TelegramUsername}}</span>
+            {{end}}
+          </div>
+        </div>
+
+        {{if .Site}}
+        <div class="request-site">
+          <div class="site-label">Current Site:</div>
+          <div class="site-name">{{.Site.Name}}</div>
+          <div class="site-slug">{{.Site.Slug}}</div>
+          <a href="{{.Site.URL}}" target="_blank" class="site-url">{{.Site.URL}}</a>
+        </div>
+        {{end}}
+
+        <div class="request-changes">
+          <div class="changes-label">Requested Changes:</div>
+          <div class="changes-list">
+            {{range $key, $value := .ChangedFields}}
+            <div class="change-item">
+              <span class="change-key">{{$key}}:</span>
+              <span class="change-value">{{$value}}</span>
+            </div>
+            {{end}}
+          </div>
+        </div>
+      </div>
+
+      <div class="request-actions">
+        <form action="/admin/requests/{{.ID}}/approve" method="POST" style="display: inline;">
+          <button type="submit" class="btn btn-success">
+            <i class="ri-check-line"></i>
+            Approve
+          </button>
+        </form>
+        <form action="/admin/requests/{{.ID}}/reject" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to reject this request?')">
+          <button type="submit" class="btn btn-danger">
+            <i class="ri-close-line"></i>
+            Reject
+          </button>
+        </form>
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="empty-state">
+    <div class="empty-icon">
+      <i class="ri-inbox-line"></i>
+    </div>
+    <div class="empty-title">No Pending Requests</div>
+    <div class="empty-description">All requests have been processed. New submissions will appear here.</div>
+    <div class="empty-actions">
+      <a href="/admin" class="btn btn-primary">
+        <i class="ri-arrow-left-line"></i>
+        Manage Sites
+      </a>
+      <a href="/" class="btn btn-secondary">
+        <i class="ri-global-line"></i>
+        View Public Site
+      </a>
+    </div>
+  </div>
+  {{end}}
+</main>
+</body>
+</html>

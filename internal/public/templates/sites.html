@@ -15,6 +15,38 @@
         <i class="ri-bubble-chart-fill"></i>
         Webring Listing
     </h1>
+    {{if .User}}
+    <div class="user-bar">
+        <span>Welcome, {{if .User.FirstName}}{{.User.FirstName}}{{else}}{{.User.TelegramUsername}}{{end}}!</span>
+        <div class="user-actions">
+            {{if .User.IsAdmin}}
+            <a href="/admin" class="user-action admin">
+                <i class="ri-settings-line"></i>
+                Manage Sites
+            </a>
+            <a href="/admin/requests" class="user-action admin">
+                <i class="ri-shield-user-line"></i>
+                Admin Dashboard
+            </a>
+            {{else}}
+            <a href="/user" class="user-action">
+                <i class="ri-user-line"></i>
+                My Dashboard
+            </a>
+            {{end}}
+            <a href="/docs/" class="user-action docs">
+                <i class="ri-book-line"></i>
+                API Docs
+            </a>
+            <form action="/logout" method="POST" style="display: inline;">
+                <button type="submit" class="user-action logout">
+                    <i class="ri-logout-circle-line"></i>
+                    Logout
+                </button>
+            </form>
+        </div>
+    </div>
+    {{end}}
 </header>
 <main>
     <ul class="site-list">
@@ -31,13 +63,38 @@
             </a>
         </li>
         {{end}}
-        {{if .ContactLink}}
-        <li class="join-link">
-            <i class="ri-user-add-line"></i>
-            <a href="{{.ContactLink}}" target="_blank">...and maybe you?</a>
-        </li>
-        {{end}}
     </ul>
+
+    {{if not .User}}
+    <section class="action-section">
+        <h2>Get Involved</h2>
+        <div class="action-cards">
+            <a href="/submit" class="action-card action-card-primary">
+                <i class="ri-add-circle-line"></i>
+                <div class="action-content">
+                    <div class="action-title">Submit Your Site</div>
+                    <div class="action-description">Join the webring with your website</div>
+                </div>
+            </a>
+
+            <a href="/login" class="action-card">
+                <i class="ri-login-circle-line"></i>
+                <div class="action-content">
+                    <div class="action-title">Login</div>
+                    <div class="action-description">Manage your websites in the ring</div>
+                </div>
+            </a>
+
+            <a href="/docs/" class="action-card">
+                <i class="ri-book-line"></i>
+                <div class="action-content">
+                    <div class="action-title">API Docs</div>
+                    <div class="action-description">Developer documentation</div>
+                </div>
+            </a>
+        </div>
+    </section>
+    {{end}}
 </main>
 <footer>
     <a href="https://github.com/Alexander-D-Karpov/webring">

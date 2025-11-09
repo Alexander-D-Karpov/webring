@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"webring"
@@ -26,7 +27,6 @@ import (
 )
 
 const (
-	dirPerm           = 0o755
 	filePerm          = 0o600
 	readTimeout       = 15 * time.Second
 	writeTimeout      = 15 * time.Second
@@ -39,19 +39,34 @@ func setupLogging() (*os.File, error) {
 		logFilePath = "webring.log"
 	}
 
-	dir := filepath.Dir(logFilePath)
-	if err := os.MkdirAll(dir, dirPerm); err != nil {
-		return nil, err
+	cleaned := filepath.Clean(logFilePath)
+	if !filepath.IsAbs(cleaned) {
+		cleaned = filepath.Join(".", cleaned)
 	}
 
-	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, filePerm)
+	absBase, err := filepath.Abs(".")
+	if err != nil {
+		return nil, err
+	}
+	absTarget, err := filepath.Abs(cleaned)
+	if err != nil {
+		return nil, err
+	}
+	if absTarget != absBase && !strings.HasPrefix(absTarget, absBase+string(os.PathSeparator)) {
+		return nil, fmt.Errorf("invalid log path: %s", logFilePath)
+	}
+
+	dir := filepath.Dir(absTarget)
+	if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
+		return nil, mkErr
+	}
+
+	logFile, err := os.OpenFile(absTarget, os.O_CREATE|os.O_WRONLY|os.O_APPEND, filePerm) // #nosec G304
 	if err != nil {
 		return nil, err
 	}
 
-	multiWriter := io.MultiWriter(os.Stdout, logFile)
-	log.SetOutput(multiWriter)
-
+	log.SetOutput(io.MultiWriter(os.Stdout, logFile))
 	return logFile, nil
 }
 
@@ -160,7 +175,7 @@ func setupMediaDirectory(r *mux.Router) {
 		mediaFolder = "media"
 	}
 
-	if err := os.MkdirAll(mediaFolder, os.ModePerm); err != nil {
+	if err := os.MkdirAll(mediaFolder, 0o750); err != nil {
 		log.Fatalf("Failed to create media folder: %v", err)
 	}
 

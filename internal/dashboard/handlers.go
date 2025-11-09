@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -506,7 +507,8 @@ func moveSiteHandler(db *sql.DB) http.HandlerFunc {
 }
 
 func getAllSites(db *sql.DB) ([]models.Site, error) {
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(
+		context.Background(), `
 		SELECT s.id, s.slug, s.name, s.url, s.is_up, s.last_check, s.favicon, s.user_id, u.telegram_username
 		FROM sites s 
 		LEFT JOIN users u ON s.user_id = u.id 

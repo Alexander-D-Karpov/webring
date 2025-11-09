@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
@@ -121,6 +122,21 @@ func getFaviconFromHTML(baseURL *url.URL) (*url.URL, error) {
 	return parsedFaviconURL, nil
 }
 
+func safeJoinUnder(base, name string) (string, error) {
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return "", err
+	}
+	candAbs, err := filepath.Abs(filepath.Join(base, name))
+	if err != nil {
+		return "", err
+	}
+	if candAbs != baseAbs && !strings.HasPrefix(candAbs, baseAbs+string(os.PathSeparator)) {
+		return "", fmt.Errorf("invalid path: %s", candAbs)
+	}
+	return candAbs, nil
+}
+
 func downloadFavicon(faviconURL, baseURL *url.URL, mediaFolder string, siteID int) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dlTimeout)
 	defer cancel()
@@ -130,9 +146,10 @@ func downloadFavicon(faviconURL, baseURL *url.URL, mediaFolder string, siteID in
 		return "", err
 	}
 
-	userAgent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-		"(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-	req.Header.Set("User-Agent", userAgent)
+	ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+		"AppleWebKit/537.36 (KHTML, like Gecko) " +
+		"Chrome/91.0.4472.124 Safari/537.36"
+	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "image/webp,image/apng,image/*,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.5")
 	req.Header.Set("Connection", "keep-alive")
@@ -165,9 +182,16 @@ func downloadFavicon(faviconURL, baseURL *url.URL, mediaFolder string, siteID in
 	}
 
 	fileName := fmt.Sprintf("favicon-%d-%s%s", siteID, hash[:8], ext)
-	filePath := filepath.Join(mediaFolder, fileName)
+	absPath, err := safeJoinUnder(mediaFolder, fileName)
+	if err != nil {
+		return "", err
+	}
 
-	out, err := os.Create(filePath)
+	if mkErr := os.MkdirAll(filepath.Dir(absPath), 0o750); mkErr != nil {
+		return "", mkErr
+	}
+
+	out, err := os.OpenFile(absPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) // #nosec G304
 	if err != nil {
 		return "", err
 	}
@@ -177,10 +201,9 @@ func downloadFavicon(faviconURL, baseURL *url.URL, mediaFolder string, siteID in
 		}
 	}()
 
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
-		if removeErr := os.Remove(filePath); removeErr != nil {
-			log.Printf("Failed to remove file after copy error: %v", removeErr)
+	if _, err = io.Copy(out, resp.Body); err != nil {
+		if rmErr := os.Remove(absPath); rmErr != nil {
+			log.Printf("Failed to remove partial file %q: %v", absPath, rmErr)
 		}
 		return "", err
 	}

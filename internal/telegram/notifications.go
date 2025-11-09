@@ -67,7 +67,8 @@ func NotifyAdminsOfNewRequest(db *sql.DB, request *models.UpdateRequest, user *m
 }
 
 func getAdminTelegramIDs(db *sql.DB) ([]int64, error) {
-	rows, err := db.Query(`
+	rows, err := db.QueryContext(
+		context.Background(), `
 		SELECT telegram_id 
 		FROM users 
 		WHERE is_admin = true AND telegram_id IS NOT NULL

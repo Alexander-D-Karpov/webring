@@ -46,6 +46,13 @@
                     <i class="ri-book-line"></i>
                     <span>API</span>
                 </a>
+                <form action="/logout" method="POST" style="display: inline;">
+                    {{csrfField .Request}}
+                    <button type="submit" class="nav-item logout-btn">
+                        <i class="ri-logout-circle-line"></i>
+                        <span>Logout</span>
+                    </button>
+                </form>
             </nav>
         </div>
     </div>

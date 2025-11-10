@@ -85,6 +85,28 @@ db-reset:
 	@$(MIGRATE) down -all
 	@$(MIGRATE) up
 
+# Docker commands
+docker-build:
+	@echo "Building Docker image..."
+	@docker build -t webring:latest .
+
+docker-run:
+	@echo "Running Docker container..."
+	@docker run -p 8080:8080 --env-file .env webring:latest
+
+# Go module management
+mod-tidy:
+	@echo "Tidying Go modules..."
+	@go mod tidy
+
+mod-download:
+	@echo "Downloading Go modules..."
+	@go mod download
+
+mod-verify:
+	@echo "Verifying Go modules..."
+	@go mod verify
+
 # Help
 help:
 	@echo "Available commands:"
@@ -105,4 +127,9 @@ help:
 	@echo "  clean          - Clean build artifacts"
 	@echo "  install-tools  - Install development tools"
 	@echo "  db-reset       - Reset database (down-all then up)"
+	@echo "  docker-build   - Build Docker image"
+	@echo "  docker-run     - Run Docker container"
+	@echo "  mod-tidy       - Tidy Go modules"
+	@echo "  mod-download   - Download Go modules"
+	@echo "  mod-verify     - Verify Go modules"
 	@echo "  help           - Show this help message"

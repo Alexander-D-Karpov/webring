@@ -149,9 +149,11 @@ func mixedAuthUsersHandler(db *sql.DB) http.HandlerFunc {
 		data := struct {
 			CurrentUser *models.User
 			Users       []models.User
+			Request     *http.Request
 		}{
 			CurrentUser: currentUser,
 			Users:       users,
+			Request:     r,
 		}
 
 		if err = t.ExecuteTemplate(w, "users_management.html", data); err != nil {

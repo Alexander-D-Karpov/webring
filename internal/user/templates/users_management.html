@@ -48,6 +48,7 @@
                 </a>
                 {{if ne .CurrentUser.ID -1}}
                 <form action="/logout" method="POST" style="display: inline;">
+                    {{csrfField .Request}}
                     <button type="submit" class="nav-item logout-btn">
                         <i class="ri-logout-circle-line"></i>
                         <span>Logout</span>
@@ -139,7 +140,9 @@
                     Make Admin
                     {{end}}
                 </button>
-                <form action="/admin/users/{{.ID}}/toggle-admin" method="POST" id="form-{{.ID}}"></form>
+                <form action="/admin/users/{{.ID}}/toggle-admin" method="POST" id="form-{{.ID}}">
+                    {{csrfField $.Request}}
+                </form>
                 {{else}}
                 <div class="self-indicator">
                     <i class="ri-user-star-line"></i>

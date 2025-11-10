@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -26,6 +27,12 @@ type Message struct {
 type Response struct {
 	OK          bool   `json:"ok"`
 	Description string `json:"description"`
+}
+
+var markdownV2Escape = regexp.MustCompile(`([_*\[\]()~` + "`" + `>#+\-=|{}.!\\])`)
+
+func escapeMarkdownV2(text string) string {
+	return markdownV2Escape.ReplaceAllString(text, `\$1`)
 }
 
 func isDebugMode() bool {
@@ -62,7 +69,7 @@ func NotifyAdminsOfNewRequest(db *sql.DB, request *models.UpdateRequest, user *m
 	message := formatRequestMessage(request, user)
 
 	for _, adminID := range admins {
-		go sendTelegramMessage(botToken, adminID, message)
+		go SendMessage(botToken, adminID, message)
 	}
 }
 
@@ -110,6 +117,7 @@ func formatRequestMessage(request *models.UpdateRequest, user *models.User) stri
 	} else if user.TelegramUsername != nil && *user.TelegramUsername != "" {
 		userName = "@" + *user.TelegramUsername
 	}
+	userName = escapeMarkdownV2(userName)
 
 	switch request.RequestType {
 	case "create":
@@ -117,13 +125,13 @@ func formatRequestMessage(request *models.UpdateRequest, user *models.User) stri
 		message += fmt.Sprintf("*User:* %s\n", userName)
 
 		if slug, ok := request.ChangedFields["slug"].(string); ok {
-			message += fmt.Sprintf("*Slug:* `%s`\n", slug)
+			message += fmt.Sprintf("*Slug:* `%s`\n", escapeMarkdownV2(slug))
 		}
 		if name, ok := request.ChangedFields["name"].(string); ok {
-			message += fmt.Sprintf("*Site Name:* %s\n", name)
+			message += fmt.Sprintf("*Site Name:* %s\n", escapeMarkdownV2(name))
 		}
 		if url, ok := request.ChangedFields["url"].(string); ok {
-			message += fmt.Sprintf("*URL:* %s\n", url)
+			message += fmt.Sprintf("*URL:* %s\n", escapeMarkdownV2(url))
 		}
 
 	case "update":
@@ -131,27 +139,33 @@ func formatRequestMessage(request *models.UpdateRequest, user *models.User) stri
 		message += fmt.Sprintf("*User:* %s\n", userName)
 
 		if request.Site != nil {
-			message += fmt.Sprintf("*Site:* %s (`%s`)\n", request.Site.Name, request.Site.Slug)
+			siteName := escapeMarkdownV2(request.Site.Name)
+			siteSlug := escapeMarkdownV2(request.Site.Slug)
+			message += fmt.Sprintf("*Site:* %s \\(`%s`\\)\n", siteName, siteSlug)
 		}
 
 		message += "*Changes:*\n"
 		for field, value := range request.ChangedFields {
-			message += fmt.Sprintf("  • *%s:* %v\n", field, value)
+			fieldEsc := escapeMarkdownV2(field)
+			valueStr := fmt.Sprintf("%v", value)
+			valueEsc := escapeMarkdownV2(valueStr)
+			message += fmt.Sprintf("  • *%s:* %s\n", fieldEsc, valueEsc)
 		}
 	}
 
-	message += fmt.Sprintf("\n*Submitted:* %s", request.CreatedAt.Format("15:04 02.01.2006"))
+	dateStr := request.CreatedAt.Format("15:04 02\\.01\\.2006")
+	message += fmt.Sprintf("\n*Submitted:* %s", dateStr)
 
 	return message
 }
 
-func sendTelegramMessage(botToken string, chatID int64, text string) {
+func SendMessage(botToken string, chatID int64, text string) {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
 
 	msg := Message{
 		ChatID:    chatID,
 		Text:      text,
-		ParseMode: "Markdown",
+		ParseMode: "MarkdownV2",
 	}
 
 	jsonData, err := json.Marshal(msg)
@@ -194,7 +208,7 @@ func sendTelegramMessage(botToken string, chatID int64, text string) {
 	}
 
 	if isDebugMode() {
-		log.Printf("Successfully sent Telegram notification to admin %d", chatID)
+		log.Printf("Successfully sent Telegram notification to user %d", chatID)
 	}
 }
 
@@ -211,17 +225,21 @@ func NotifyUserOfApprovedRequest(request *models.UpdateRequest, user *models.Use
 		if name, ok := request.ChangedFields["name"].(string); ok {
 			siteName = name
 		}
-		message = fmt.Sprintf("*Request Approved*\n\nYour site submission has been approved!\n\n"+
-			"*Site:* %s\n\nYour site is now part of the webring.", siteName)
+		siteNameEsc := escapeMarkdownV2(siteName)
+		message = fmt.Sprintf("*Request Approved*\n\nYour site submission has been approved\\!\n\n"+
+			"*Site:* %s\n\nYour site is now part of the webring\\.", siteNameEsc)
 	case "update":
-		message = "*Update Approved*\n\nYour site update request has been approved and the changes have been applied."
+		message = "*Update Approved*\n\nYour site update request has been approved and the changes have been applied\\."
 		if len(request.ChangedFields) > 0 {
 			message += "\n\n*Applied changes:*\n"
 			for field, value := range request.ChangedFields {
-				message += fmt.Sprintf("• *%s:* %v\n", field, value)
+				fieldEsc := escapeMarkdownV2(field)
+				valueStr := fmt.Sprintf("%v", value)
+				valueEsc := escapeMarkdownV2(valueStr)
+				message += fmt.Sprintf("• *%s:* %s\n", fieldEsc, valueEsc)
 			}
 		}
 	}
 
-	sendTelegramMessage(botToken, user.TelegramID, message)
+	SendMessage(botToken, user.TelegramID, message)
 }

@@ -67,10 +67,12 @@ func userDashboardHandler(db *sql.DB) http.HandlerFunc {
 			User     *models.User
 			Sites    []models.Site
 			Requests []models.UpdateRequest
+			Request  *http.Request
 		}{
 			User:     user,
 			Sites:    sites,
 			Requests: requests,
+			Request:  r,
 		}
 
 		if err = t.ExecuteTemplate(w, "user_dashboard.html", data); err != nil {

@@ -107,7 +107,7 @@ func listSitesHandler(db *sql.DB) http.HandlerFunc {
 }
 
 func submitSitePageHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		templatesMu.RLock()
 		t := templates
 		templatesMu.RUnlock()
@@ -117,7 +117,13 @@ func submitSitePageHandler() http.HandlerFunc {
 			return
 		}
 
-		if err := t.ExecuteTemplate(w, "submit_site.html", nil); err != nil {
+		data := struct {
+			Request *http.Request
+		}{
+			Request: r,
+		}
+
+		if err := t.ExecuteTemplate(w, "submit_site.html", data); err != nil {
 			log.Printf("Error rendering submit site template: %v", err)
 			http.Error(w, "Error rendering template", http.StatusInternalServerError)
 			return

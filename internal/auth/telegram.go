@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type TelegramUser struct {
@@ -57,6 +58,9 @@ func VerifyTelegramAuth(values url.Values, botToken string) (*TelegramUser, erro
 	authDate, err := strconv.ParseInt(values.Get("auth_date"), 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid auth_date")
+	}
+	if time.Since(time.Unix(authDate, 0)) > 24*time.Hour {
+		return nil, fmt.Errorf("stale login payload")
 	}
 
 	return &TelegramUser{

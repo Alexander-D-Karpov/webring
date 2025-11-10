@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Install git and ca-certificates
 RUN apk add --no-cache git ca-certificates tzdata
@@ -29,6 +29,7 @@ WORKDIR /root/
 
 # Copy the binary from builder stage
 COPY --from=builder /build/webring .
+COPY --from=builder /build/docs ./docs
 
 # Create media directory
 RUN mkdir -p media

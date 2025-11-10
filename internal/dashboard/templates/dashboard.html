@@ -96,21 +96,25 @@
                             <i class="ri-check-line"></i>
                         </button>
                     </div>
-                    <form action="/admin/add" method="POST" style="display: none" id="form-new"></form>
+                    <form action="/admin/add" method="POST" style="display: none" id="form-new">
+                        {{csrfField .Request}}
+                    </form>
                 </td>
             </tr>
-            {{range .}}
+            {{range .Sites}}
             <tr class="row-site">
                 <td>
                     <div class="order-controls">
                         <span class="order-number">{{.ID}}</span>
                         <div class="order-actions">
                             <form action="/admin/reorder/{{.ID}}/up" method="POST">
+                                {{csrfField $.Request}}
                                 <button type="submit" class="btn-order">
                                     <i class="ri-arrow-up-s-line"></i>
                                 </button>
                             </form>
                             <form action="/admin/reorder/{{.ID}}/down" method="POST">
+                                {{csrfField $.Request}}
                                 <button type="submit" class="btn-order">
                                     <i class="ri-arrow-down-s-line"></i>
                                 </button>
@@ -170,8 +174,11 @@
                         <button type="submit" form="form-{{.ID}}" class="btn btn-primary btn-sm">
                             <i class="ri-save-3-line"></i>
                         </button>
-                        <form action="/admin/update/{{.ID}}" method="POST" id="form-{{.ID}}"></form>
+                        <form action="/admin/update/{{.ID}}" method="POST" id="form-{{.ID}}">
+                            {{csrfField $.Request}}
+                        </form>
                         <form action="/admin/remove/{{.ID}}" method="POST" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this site?')">
+                            {{csrfField $.Request}}
                             <button type="submit" class="btn btn-danger btn-sm">
                                 <i class="ri-delete-bin-line"></i>
                             </button>

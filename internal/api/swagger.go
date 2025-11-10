@@ -13,7 +13,7 @@ const dirPerm = 0o755
 // @title Webring API
 // @version 1.0
 // @description API for the webring
-// @host localhost:8000
+// @host localhost:8080
 // @contact.url mailto://sanspie@akarpov.ru
 // @BasePath /
 

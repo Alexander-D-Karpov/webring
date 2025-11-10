@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  GO_VERSION: '1.25.x'
+  GO_VERSION: '1.25.0'
 
 permissions:
   contents: read
@@ -27,10 +27,10 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Run golangci-lint (v2)
+      - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.4.0
+          version: latest
           args: --timeout=5m
 
   test:
@@ -42,8 +42,8 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_PASSWORD: testpass
-          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
           POSTGRES_DB: webring_test
         options: >-
           --health-cmd pg_isready
@@ -68,22 +68,29 @@ jobs:
 
       - name: Run migrations
         env:
-          DB_CONNECTION_STRING: postgres://testuser:testpass@localhost:5432/webring_test?sslmode=disable
+          DB_CONNECTION_STRING: postgres://postgres:postgres@localhost:5432/webring_test?sslmode=disable
         run: |
           migrate -database "$DB_CONNECTION_STRING" -path migrations up
 
       - name: Run tests
         env:
-          DB_CONNECTION_STRING: postgres://testuser:testpass@localhost:5432/webring_test?sslmode=disable
-          CHECKER_DEBUG: false
+          DB_CONNECTION_STRING: postgres://postgres:postgres@localhost:5432/webring_test?sslmode=disable
+          CHECKER_DEBUG: "false"
           LOG_FILE_PATH: test.log
+          TELEGRAM_BOT_TOKEN: ""
+          TELEGRAM_BOT_USERNAME: ""
+          PORT: "8080"
+          MEDIA_FOLDER: "media"
+          SESSION_TTL_HOURS: "2160"
+          SESSION_SECURE_COOKIE: "false"
         run: go test -v -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           file: ./coverage.out
           fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   build:
     name: Build
@@ -199,7 +206,7 @@ jobs:
           echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Release ${{ steps.tag.outputs.date }}

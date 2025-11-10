@@ -30,9 +30,11 @@ func adminDashboardHandler(db *sql.DB) http.HandlerFunc {
 		data := struct {
 			User     *models.User
 			Requests []models.UpdateRequest
+			Request  *http.Request
 		}{
 			User:     user,
 			Requests: requests,
+			Request:  r,
 		}
 
 		templatesMu.RLock()

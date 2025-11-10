@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"webring/internal/models"
+	"webring/internal/telegram"
 )
 
 const (
@@ -33,6 +35,19 @@ type Checker struct {
 	proxy      *url.URL
 	proxyAlive bool
 	debug      bool
+	siteStates sync.Map
+}
+
+type SiteState struct {
+	IsUp              bool
+	LastNotifiedState bool
+	NotifiedAt        time.Time
+}
+
+var markdownV2Escape = regexp.MustCompile(`([_*\[\]()~` + "`" + `>#+\-=|{}.!\\])`)
+
+func escapeMarkdownV2(text string) string {
+	return markdownV2Escape.ReplaceAllString(text, `\$1`)
 }
 
 func NewChecker(db *sql.DB) *Checker {
@@ -56,11 +71,45 @@ func NewChecker(db *sql.DB) *Checker {
 		}
 	}
 
-	return &Checker{
+	checker := &Checker{
 		db:         db,
 		proxy:      proxyURL,
 		proxyAlive: true,
 		debug:      debug,
+	}
+
+	checker.loadInitialStates()
+	return checker
+}
+
+func (c *Checker) loadInitialStates() {
+	rows, err := c.db.Query("SELECT id, is_up FROM sites")
+	if err != nil {
+		log.Printf("Error loading initial site states: %v", err)
+		return
+	}
+	defer func() {
+		if cerr := rows.Close(); cerr != nil {
+			log.Printf("Error closing rows: %v", cerr)
+		}
+	}()
+
+	for rows.Next() {
+		var id int
+		var isUp bool
+		if scanErr := rows.Scan(&id, &isUp); scanErr != nil {
+			log.Printf("Error scanning site state: %v", scanErr)
+			continue
+		}
+		c.siteStates.Store(id, &SiteState{
+			IsUp:              isUp,
+			LastNotifiedState: isUp,
+			NotifiedAt:        time.Now(),
+		})
+	}
+
+	if rowsErr := rows.Err(); rowsErr != nil {
+		log.Printf("Error iterating rows: %v", rowsErr)
 	}
 }
 
@@ -105,6 +154,94 @@ func isProxyError(err error) bool {
 	return false
 }
 
+func (c *Checker) checkAndNotifyStatusChange(siteID int, userID *int, siteName string, currentIsUp bool) {
+	if userID == nil || *userID == 0 {
+		return
+	}
+
+	stateInterface, exists := c.siteStates.Load(siteID)
+	if !exists {
+		c.siteStates.Store(siteID, &SiteState{
+			IsUp:              currentIsUp,
+			LastNotifiedState: currentIsUp,
+			NotifiedAt:        time.Now(),
+		})
+		return
+	}
+
+	state, ok := stateInterface.(*SiteState)
+	if !ok {
+		log.Printf("Error: invalid state type for site %d", siteID)
+		return
+	}
+
+	statusChanged := state.LastNotifiedState != currentIsUp
+
+	if statusChanged {
+		now := time.Now()
+		timeSinceLastNotification := now.Sub(state.NotifiedAt)
+
+		if timeSinceLastNotification >= 30*time.Second {
+			go c.notifyOwner(*userID, siteName, currentIsUp)
+
+			state.LastNotifiedState = currentIsUp
+			state.NotifiedAt = now
+		}
+	}
+
+	state.IsUp = currentIsUp
+	c.siteStates.Store(siteID, state)
+}
+
+func (c *Checker) notifyOwner(userID int, siteName string, isUp bool) {
+	user, err := c.getUserByID(userID)
+	if err != nil {
+		log.Printf("Error getting user for notification: %v", err)
+		return
+	}
+
+	if user.TelegramID == 0 {
+		return
+	}
+
+	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	if botToken == "" {
+		return
+	}
+
+	siteNameEscaped := escapeMarkdownV2(siteName)
+
+	var message string
+	if isUp {
+		message = fmt.Sprintf(
+			"*Site Status: Online*\n\nYour site *%s* is now responding and back online\\.",
+			siteNameEscaped,
+		)
+	} else {
+		message = fmt.Sprintf(
+			"*Site Status: Offline*\n\nYour site *%s* is currently not responding\\. "+
+				"Please check your server\\.",
+			siteNameEscaped,
+		)
+	}
+
+	telegram.SendMessage(botToken, user.TelegramID, message)
+}
+
+func (c *Checker) getUserByID(userID int) (*models.User, error) {
+	var user models.User
+	err := c.db.QueryRow(`
+		SELECT id, telegram_id, telegram_username, first_name, last_name, is_admin
+		FROM users WHERE id = $1
+	`, userID).Scan(&user.ID, &user.TelegramID, &user.TelegramUsername,
+		&user.FirstName, &user.LastName, &user.IsAdmin)
+
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
 func (c *Checker) checkAllSites() {
 	sites, err := c.getAllSites()
 	if err != nil {
@@ -114,22 +251,30 @@ func (c *Checker) checkAllSites() {
 
 	c.debugLogf("Starting check of %d sites", len(sites))
 
-	if c.proxy != nil {
-		proxySuccess := false
-		allProxyErrors := true
+	sem := make(chan struct{}, 20)
+	var wg sync.WaitGroup
 
-		var wg sync.WaitGroup
-		var mutex sync.Mutex
+	if c.proxy != nil {
+		var (
+			proxySuccess   bool
+			allProxyErrors = true
+			mu             sync.Mutex
+		)
 
 		for _, site := range sites {
+			sem <- struct{}{}
 			wg.Add(1)
+
 			go func(s models.Site) {
-				defer wg.Done()
+				defer func() {
+					<-sem
+					wg.Done()
+				}()
 
 				c.debugLogf("Checking site %s (ID: %d) via proxy", s.URL, s.ID)
 				isUp, responseTime, errorMsg := c.doCheckSite(&s, true)
 
-				mutex.Lock()
+				mu.Lock()
 				if isUp {
 					c.debugLogf("Site %s is up (proxy), response time: %.2fs", s.URL, responseTime)
 					proxySuccess = true
@@ -137,16 +282,16 @@ func (c *Checker) checkAllSites() {
 				} else {
 					c.debugLogf("Site %s is down (proxy): %s", s.URL, errorMsg)
 					if !isProxyError(errors.New(errorMsg)) {
-						c.debugLogf("Error for %s appears to be site-specific, not proxy-related", s.URL)
 						allProxyErrors = false
 					}
 				}
-				mutex.Unlock()
+				mu.Unlock()
 
 				c.updateSiteStatus(s.ID, isUp, responseTime)
 				if !isUp {
 					c.logError(s.URL, errorMsg)
 				}
+				c.checkAndNotifyStatusChange(s.ID, s.UserID, s.Name, isUp)
 			}(site)
 		}
 		wg.Wait()
@@ -156,11 +301,15 @@ func (c *Checker) checkAllSites() {
 			log.Printf("Proxy appears to be down, retrying with direct connections")
 			c.debugLogf("All sites failed with proxy errors, switching to direct connections")
 
-			var wg2 sync.WaitGroup
 			for _, site := range sites {
-				wg2.Add(1)
+				sem <- struct{}{}
+				wg.Add(1)
+
 				go func(s models.Site) {
-					defer wg2.Done()
+					defer func() {
+						<-sem
+						wg.Done()
+					}()
 
 					c.debugLogf("Retrying site %s (ID: %d) without proxy", s.URL, s.ID)
 					isUp, responseTime, errorMsg := c.doCheckSite(&s, false)
@@ -175,37 +324,44 @@ func (c *Checker) checkAllSites() {
 					if !isUp {
 						c.logError(s.URL, errorMsg)
 					}
+					c.checkAndNotifyStatusChange(s.ID, s.UserID, s.Name, isUp)
 				}(site)
 			}
-			wg2.Wait()
+			wg.Wait()
 		} else {
 			c.debugLogf("Proxy is working correctly, no need for direct connection retries")
 		}
-	} else {
-		c.debugLogf("No proxy configured, checking sites directly")
-		var wg sync.WaitGroup
-		for _, site := range sites {
-			wg.Add(1)
-			go func(s models.Site) {
-				defer wg.Done()
-
-				c.debugLogf("Checking site %s (ID: %d) directly", s.URL, s.ID)
-				isUp, responseTime, errorMsg := c.doCheckSite(&s, false)
-
-				if isUp {
-					c.debugLogf("Site %s is up, response time: %.2fs", s.URL, responseTime)
-				} else {
-					c.debugLogf("Site %s is down: %s", s.URL, errorMsg)
-				}
-
-				c.updateSiteStatus(s.ID, isUp, responseTime)
-				if !isUp {
-					c.logError(s.URL, errorMsg)
-				}
-			}(site)
-		}
-		wg.Wait()
+		return
 	}
+
+	c.debugLogf("No proxy configured, checking sites directly")
+	for _, site := range sites {
+		sem <- struct{}{}
+		wg.Add(1)
+
+		go func(s models.Site) {
+			defer func() {
+				<-sem
+				wg.Done()
+			}()
+
+			c.debugLogf("Checking site %s (ID: %d) directly", s.URL, s.ID)
+			isUp, responseTime, errorMsg := c.doCheckSite(&s, false)
+
+			if isUp {
+				c.debugLogf("Site %s is up, response time: %.2fs", s.URL, responseTime)
+			} else {
+				c.debugLogf("Site %s is down: %s", s.URL, errorMsg)
+			}
+
+			c.updateSiteStatus(s.ID, isUp, responseTime)
+			if !isUp {
+				c.logError(s.URL, errorMsg)
+			}
+			c.checkAndNotifyStatusChange(s.ID, s.UserID, s.Name, isUp)
+		}(site)
+	}
+	wg.Wait()
 }
 
 func (c *Checker) doCheckSite(site *models.Site, useProxy bool) (isUp bool, responseTime float64, errorMsg string) {
@@ -286,7 +442,7 @@ func (c *Checker) logError(siteURL, errorMsg string) {
 }
 
 func (c *Checker) getAllSites() ([]models.Site, error) {
-	rows, err := c.db.Query("SELECT id, url FROM sites")
+	rows, err := c.db.Query("SELECT id, name, url, user_id FROM sites")
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +455,7 @@ func (c *Checker) getAllSites() ([]models.Site, error) {
 	var sites []models.Site
 	for rows.Next() {
 		var site models.Site
-		if scanErr := rows.Scan(&site.ID, &site.URL); scanErr != nil {
+		if scanErr := rows.Scan(&site.ID, &site.Name, &site.URL, &site.UserID); scanErr != nil {
 			return nil, scanErr
 		}
 		sites = append(sites, site)

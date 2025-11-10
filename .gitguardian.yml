@@ -22,7 +22,7 @@ secret_scanning:
       pattern: 'postgres://postgres:postgres@localhost'
 
     - name: "Test credentials"
-      pattern: 'testuser|testpass|test_.*'
+      pattern: 'postgres|postgres|test_.*'
 
 additional_config:
   high_entropy_threshold: 4.5

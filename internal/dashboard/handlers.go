@@ -91,7 +91,7 @@ func renderTemplate(w http.ResponseWriter, name string, data interface{}) error 
 }
 
 func dashboardHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		templatesMu.RLock()
 		t := templates
 		templatesMu.RUnlock()
@@ -109,7 +109,15 @@ func dashboardHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		if err = renderTemplate(w, "dashboard.html", sites); err != nil {
+		data := struct {
+			Sites   []models.Site
+			Request *http.Request
+		}{
+			Sites:   sites,
+			Request: r,
+		}
+
+		if err = renderTemplate(w, "dashboard.html", data); err != nil {
 			log.Printf("Error rendering template: %v", err)
 			http.Error(w, "Error rendering template", http.StatusInternalServerError)
 			return

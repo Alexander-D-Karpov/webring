@@ -1,14 +1,14 @@
 package api
 
 import (
+	"io/fs"
 	"log"
 	"net/http"
-	"os"
+
+	"webring"
 
 	"github.com/gorilla/mux"
 )
-
-const dirPerm = 0o755
 
 // @title Webring API
 // @version 1.0
@@ -18,18 +18,15 @@ const dirPerm = 0o755
 // @BasePath /
 
 func RegisterSwaggerHandlers(r *mux.Router) {
-	ensureDocsDirectory()
-
-	// Register specific JSON endpoint BEFORE the PathPrefix handler
 	r.HandleFunc("/docs/swagger.json", swaggerJSONHandler).Methods("GET")
-	r.PathPrefix("/docs/").Handler(http.StripPrefix("/docs/", http.FileServer(http.Dir("./docs/"))))
-}
 
-func ensureDocsDirectory() {
-	docsDir := "docs"
-	if err := os.MkdirAll(docsDir, dirPerm); err != nil {
-		log.Printf("Warning: Could not create docs directory: %v", err)
+	docsFS, err := fs.Sub(webring.Files, "docs")
+	if err != nil {
+		log.Printf("Warning: Could not access docs directory: %v", err)
+		return
 	}
+
+	r.PathPrefix("/docs/").Handler(http.StripPrefix("/docs/", http.FileServer(http.FS(docsFS))))
 }
 
 func swaggerJSONHandler(w http.ResponseWriter, _ *http.Request) {

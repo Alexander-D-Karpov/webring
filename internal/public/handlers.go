@@ -186,7 +186,6 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 			}
 
 			if userID != nil {
-				var err error
 				submittingUser, err = getUserByID(db, *userID)
 				if err != nil {
 					log.Printf("Error getting user by ID: %v", err)
@@ -358,8 +357,8 @@ func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, erro
 	err = db.QueryRow(`
 		INSERT INTO users (telegram_username, telegram_id) 
 		VALUES ($1, NULL) 
-		ON CONFLICT (telegram_username) DO UPDATE 
-		SET telegram_username = EXCLUDED.telegram_username
+		ON CONFLICT (telegram_username) 
+		DO UPDATE SET telegram_username = EXCLUDED.telegram_username
 		RETURNING id
 	`, username).Scan(&userID)
 	if err != nil {

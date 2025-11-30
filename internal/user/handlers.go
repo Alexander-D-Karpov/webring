@@ -2,6 +2,7 @@ package user
 
 import (
 	"database/sql"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -291,51 +292,70 @@ func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error
 		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 
 	if err == nil {
-		if _, err = db.Exec(`
-			UPDATE users SET telegram_username = $1, first_name = $2, last_name = $3
+		_, updateErr := db.Exec(`
+			UPDATE users 
+			SET telegram_username = $1, first_name = $2, last_name = $3
 			WHERE telegram_id = $4
-		`, &tgUser.Username, &tgUser.FirstName, &tgUser.LastName, tgUser.ID); err != nil {
-			return nil, err
+		`, &tgUser.Username, &tgUser.FirstName, &tgUser.LastName, tgUser.ID)
+		if updateErr != nil {
+			log.Printf("Warning: Could not update user info: %v", updateErr)
 		}
 		return &user, nil
 	}
 
 	if err != sql.ErrNoRows {
-		return nil, err
+		return nil, fmt.Errorf("error querying user by telegram_id: %w", err)
 	}
 
 	err = db.QueryRow(`
 		SELECT id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at
-		FROM users WHERE telegram_username = $1 AND telegram_username IS NOT NULL
+		FROM users 
+		WHERE telegram_username = $1 AND telegram_id IS NULL
 	`, &tgUser.Username).Scan(
 		&user.ID, &user.TelegramID, &user.TelegramUsername,
 		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 
 	if err == nil {
-		if _, err = db.Exec(`
+		_, updateErr := db.Exec(`
 			UPDATE users 
 			SET telegram_id = $1, first_name = $2, last_name = $3
-			WHERE id = $4
-		`, tgUser.ID, &tgUser.FirstName, &tgUser.LastName, user.ID); err != nil {
-			return nil, err
+			WHERE id = $4 AND telegram_id IS NULL
+		`, tgUser.ID, &tgUser.FirstName, &tgUser.LastName, user.ID)
+
+		if updateErr != nil {
+			return nil, fmt.Errorf("error updating placeholder account: %w", updateErr)
 		}
+
+		user.TelegramID = tgUser.ID
+		user.FirstName = &tgUser.FirstName
+		user.LastName = &tgUser.LastName
+
+		log.Printf("Mapped placeholder account @%s (ID: %d) to telegram user %d",
+			tgUser.Username, user.ID, tgUser.ID)
+
 		return &user, nil
 	}
 
 	if err != sql.ErrNoRows {
-		return nil, err
+		return nil, fmt.Errorf("error checking for placeholder account: %w", err)
 	}
 
 	err = db.QueryRow(`
 		INSERT INTO users (telegram_id, telegram_username, first_name, last_name)
 		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (telegram_username) WHERE telegram_username IS NOT NULL
+		DO UPDATE SET 
+			telegram_id = EXCLUDED.telegram_id,
+			first_name = EXCLUDED.first_name,
+			last_name = EXCLUDED.last_name
+		WHERE users.telegram_id IS NULL
 		RETURNING id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at
 	`, tgUser.ID, &tgUser.Username, &tgUser.FirstName, &tgUser.LastName).Scan(
 		&user.ID, &user.TelegramID, &user.TelegramUsername,
 		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error creating user: %w", err)
 	}
 
 	return &user, nil

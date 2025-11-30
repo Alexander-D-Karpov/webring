@@ -164,6 +164,12 @@ func addSiteHandler(db *sql.DB) http.HandlerFunc {
 				http.Error(w, "Invalid Telegram username format", http.StatusBadRequest)
 				return
 			}
+			userID, err = findOrCreateUserByTelegramUsername(db, telegramUsernameClean)
+			if err != nil {
+				log.Printf("Error handling telegram username: %v", err)
+				http.Error(w, "Error processing telegram username", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		_, err = db.Exec("INSERT INTO sites (id, slug, name, url, display_order, user_id) VALUES ($1, $2, $3, $4, $5, $6)",
@@ -242,7 +248,12 @@ func updateSiteHandler(db *sql.DB) http.HandlerFunc {
 		var userID *int
 		if telegramUsername != "" {
 			var findErr error
-			userID, findErr = findOrCreateUserByTelegramUsername(db, telegramUsername)
+			telegramUsernameClean := sanitizeTelegramUsername(telegramUsername)
+			if telegramUsernameClean == "" {
+				http.Error(w, "Invalid Telegram username format", http.StatusBadRequest)
+				return
+			}
+			userID, findErr = findOrCreateUserByTelegramUsername(db, telegramUsernameClean)
 			if findErr != nil {
 				log.Printf("Error handling telegram username: %v", findErr)
 				http.Error(w, "Error processing telegram username", http.StatusInternalServerError)
@@ -584,8 +595,8 @@ func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, erro
 	err = db.QueryRow(`
 		INSERT INTO users (telegram_username, telegram_id) 
 		VALUES ($1, NULL) 
-		ON CONFLICT (telegram_username) DO UPDATE 
-		SET telegram_username = EXCLUDED.telegram_username
+		ON CONFLICT (telegram_username) 
+		DO UPDATE SET telegram_username = EXCLUDED.telegram_username
 		RETURNING id
 	`, username).Scan(&userID)
 	if err != nil {

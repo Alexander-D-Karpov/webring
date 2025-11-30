@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html"
 	"html/template"
 	"log"
@@ -20,6 +21,7 @@ import (
 	"webring/internal/models"
 
 	"github.com/gorilla/mux"
+	"github.com/lib/pq"
 )
 
 const uniqueViolation = "unique_violation"
@@ -351,18 +353,24 @@ func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, erro
 	}
 
 	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
+		return nil, fmt.Errorf("error querying user: %w", err)
 	}
 
 	err = db.QueryRow(`
 		INSERT INTO users (telegram_username, telegram_id) 
 		VALUES ($1, NULL) 
-		ON CONFLICT (telegram_username) 
-		DO UPDATE SET telegram_username = EXCLUDED.telegram_username
 		RETURNING id
 	`, username).Scan(&userID)
+
 	if err != nil {
-		return nil, err
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code.Name() == uniqueViolation {
+			err = db.QueryRow("SELECT id FROM users WHERE telegram_username = $1", username).Scan(&userID)
+			if err == nil {
+				return &userID, nil
+			}
+		}
+		return nil, fmt.Errorf("error creating user: %w", err)
 	}
 
 	return &userID, nil

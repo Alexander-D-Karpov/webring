@@ -2,6 +2,7 @@ package user
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"webring/internal/models"
 
 	"github.com/gorilla/mux"
+	"github.com/lib/pq"
 )
 
 var (
@@ -343,18 +345,16 @@ func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error
 	err = db.QueryRow(`
 		INSERT INTO users (telegram_id, telegram_username, first_name, last_name)
 		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (telegram_username) WHERE telegram_username IS NOT NULL
-		DO UPDATE SET 
-			telegram_id = EXCLUDED.telegram_id,
-			first_name = EXCLUDED.first_name,
-			last_name = EXCLUDED.last_name
-		WHERE users.telegram_id IS NULL
 		RETURNING id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at
 	`, tgUser.ID, &tgUser.Username, &tgUser.FirstName, &tgUser.LastName).Scan(
 		&user.ID, &user.TelegramID, &user.TelegramUsername,
 		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 
 	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code.Name() == "unique_violation" {
+			return getOrCreateUser(db, tgUser)
+		}
 		return nil, fmt.Errorf("error creating user: %w", err)
 	}
 

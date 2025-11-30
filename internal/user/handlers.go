@@ -285,15 +285,19 @@ func logoutHandler(db *sql.DB) http.HandlerFunc {
 
 func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error) {
 	var user models.User
+	var telegramID sql.NullInt64
 
 	err := db.QueryRow(`
 		SELECT id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at
 		FROM users WHERE telegram_id = $1
 	`, tgUser.ID).Scan(
-		&user.ID, &user.TelegramID, &user.TelegramUsername,
+		&user.ID, &telegramID, &user.TelegramUsername,
 		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 
 	if err == nil {
+		if telegramID.Valid {
+			user.TelegramID = telegramID.Int64
+		}
 		_, updateErr := db.Exec(`
 			UPDATE users 
 			SET telegram_username = $1, first_name = $2, last_name = $3
@@ -314,7 +318,7 @@ func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error
 		FROM users 
 		WHERE telegram_username = $1 AND telegram_id IS NULL
 	`, &tgUser.Username).Scan(
-		&user.ID, &user.TelegramID, &user.TelegramUsername,
+		&user.ID, &telegramID, &user.TelegramUsername,
 		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 
 	if err == nil {
@@ -347,7 +351,7 @@ func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at
 	`, tgUser.ID, &tgUser.Username, &tgUser.FirstName, &tgUser.LastName).Scan(
-		&user.ID, &user.TelegramID, &user.TelegramUsername,
+		&user.ID, &telegramID, &user.TelegramUsername,
 		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 
 	if err != nil {
@@ -356,6 +360,10 @@ func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error
 			return getOrCreateUser(db, tgUser)
 		}
 		return nil, fmt.Errorf("error creating user: %w", err)
+	}
+
+	if telegramID.Valid {
+		user.TelegramID = telegramID.Int64
 	}
 
 	return &user, nil

@@ -59,18 +59,24 @@ func CreateSession(db *sql.DB, userID int) (*models.Session, error) {
 
 func GetSessionUser(db *sql.DB, sessionID string) (*models.User, error) {
 	var user models.User
+	var telegramID sql.NullInt64
 	err := db.QueryRow(`
 		SELECT u.id, u.telegram_id, u.telegram_username, u.first_name, u.last_name, u.is_admin, u.created_at
 		FROM users u
 		JOIN sessions s ON u.id = s.user_id
 		WHERE s.id = $1 AND s.expires_at > NOW()
 	`, sessionID).Scan(
-		&user.ID, &user.TelegramID, &user.TelegramUsername,
+		&user.ID, &telegramID, &user.TelegramUsername,
 		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 
 	if err != nil {
 		return nil, err
 	}
+
+	if telegramID.Valid {
+		user.TelegramID = telegramID.Int64
+	}
+
 	return &user, nil
 }
 

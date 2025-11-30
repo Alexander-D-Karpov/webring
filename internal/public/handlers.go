@@ -262,17 +262,22 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 
 func getUserByID(db *sql.DB, userID int) (*models.User, error) {
 	var user models.User
+	var telegramID sql.NullInt64
 	err := db.QueryRow(`
 		SELECT id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at 
 		FROM users WHERE id = $1
-	`, userID).Scan(&user.ID, &user.TelegramID, &user.TelegramUsername,
+	`, userID).Scan(&user.ID, &telegramID, &user.TelegramUsername,
 		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil // User not found
+			return nil, nil
 		}
 		return nil, err
+	}
+
+	if telegramID.Valid {
+		user.TelegramID = telegramID.Int64
 	}
 
 	return &user, nil

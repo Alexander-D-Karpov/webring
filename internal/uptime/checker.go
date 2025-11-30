@@ -230,15 +230,21 @@ func (c *Checker) notifyOwner(userID int, siteName string, isUp bool) {
 
 func (c *Checker) getUserByID(userID int) (*models.User, error) {
 	var user models.User
+	var telegramID sql.NullInt64
 	err := c.db.QueryRow(`
 		SELECT id, telegram_id, telegram_username, first_name, last_name, is_admin
 		FROM users WHERE id = $1
-	`, userID).Scan(&user.ID, &user.TelegramID, &user.TelegramUsername,
+	`, userID).Scan(&user.ID, &telegramID, &user.TelegramUsername,
 		&user.FirstName, &user.LastName, &user.IsAdmin)
 
 	if err != nil {
 		return nil, err
 	}
+
+	if telegramID.Valid {
+		user.TelegramID = telegramID.Int64
+	}
+
 	return &user, nil
 }
 

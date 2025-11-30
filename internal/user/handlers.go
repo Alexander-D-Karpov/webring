@@ -305,6 +305,28 @@ func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error
 	}
 
 	err = db.QueryRow(`
+		SELECT id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at
+		FROM users WHERE telegram_username = $1 AND telegram_username IS NOT NULL
+	`, &tgUser.Username).Scan(
+		&user.ID, &user.TelegramID, &user.TelegramUsername,
+		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
+
+	if err == nil {
+		if _, err = db.Exec(`
+			UPDATE users 
+			SET telegram_id = $1, first_name = $2, last_name = $3
+			WHERE id = $4
+		`, tgUser.ID, &tgUser.FirstName, &tgUser.LastName, user.ID); err != nil {
+			return nil, err
+		}
+		return &user, nil
+	}
+
+	if err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	err = db.QueryRow(`
 		INSERT INTO users (telegram_id, telegram_username, first_name, last_name)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at

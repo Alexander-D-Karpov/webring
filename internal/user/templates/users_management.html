@@ -124,6 +124,12 @@
                     </span>
                 </div>
                 <div class="detail-item">
+                    <span class="detail-label">Username:</span>
+                    <span class="detail-value">
+        {{if .TelegramUsername}}@{{.TelegramUsername}}{{else}}<em>Not set</em>{{end}}
+                </span>
+                </div>
+                <div class="detail-item">
                     <span class="detail-label">Joined:</span>
                     <span class="detail-value">{{.CreatedAt.Format "Jan 2, 2006"}}</span>
                 </div>

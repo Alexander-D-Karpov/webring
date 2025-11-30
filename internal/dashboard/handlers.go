@@ -571,7 +571,6 @@ func sanitizeTelegramUsername(username string) string {
 
 func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, error) {
 	var userID int
-	username = sanitizeTelegramUsername(username)
 
 	err := db.QueryRow("SELECT id FROM users WHERE telegram_username = $1", username).Scan(&userID)
 	if err == nil {
@@ -585,17 +584,11 @@ func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, erro
 	err = db.QueryRow(`
 		INSERT INTO users (telegram_username, telegram_id) 
 		VALUES ($1, NULL) 
+		ON CONFLICT (telegram_username) DO UPDATE 
+		SET telegram_username = EXCLUDED.telegram_username
 		RETURNING id
 	`, username).Scan(&userID)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code.Name() == uniqueViolation {
-			findErr := db.QueryRow("SELECT id FROM users WHERE telegram_username = $1", username).Scan(&userID)
-			if findErr == nil {
-				return &userID, nil
-			}
-			return nil, findErr
-		}
 		return nil, err
 	}
 

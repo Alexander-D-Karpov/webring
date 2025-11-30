@@ -16,11 +16,10 @@ import (
 
 	"webring/internal/telegram"
 
-	"github.com/gorilla/mux"
-	"github.com/lib/pq"
-
 	"webring/internal/auth"
 	"webring/internal/models"
+
+	"github.com/gorilla/mux"
 )
 
 const uniqueViolation = "unique_violation"
@@ -355,20 +354,15 @@ func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, erro
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
+
 	err = db.QueryRow(`
 		INSERT INTO users (telegram_username, telegram_id) 
 		VALUES ($1, NULL) 
+		ON CONFLICT (telegram_username) DO UPDATE 
+		SET telegram_username = EXCLUDED.telegram_username
 		RETURNING id
 	`, username).Scan(&userID)
 	if err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code.Name() == uniqueViolation {
-			findErr := db.QueryRow("SELECT id FROM users WHERE telegram_username = $1", username).Scan(&userID)
-			if findErr == nil {
-				return &userID, nil
-			}
-			return nil, findErr
-		}
 		return nil, err
 	}
 

@@ -17,6 +17,14 @@
     </h1>
 </header>
 <main>
+    {{if .Error}}
+    <div style="max-width: 400px; margin: 0 auto 1.5rem auto; padding: 1rem; background: rgba(185, 28, 28, 0.1); border: 1px solid rgba(185, 28, 28, 0.3); border-left: 4px solid #b91c1c; border-radius: 6px;">
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <i class="ri-error-warning-line" style="color: #fca5a5; font-size: 1.25rem;"></i>
+            <span style="color: #fecaca; font-size: 0.875rem;">{{.Error}}</span>
+        </div>
+    </div>
+    {{end}}
     <form action="/submit" method="POST" style="max-width: 400px; margin: 0 auto;">
         {{csrfField .Request}}
         <div style="margin-bottom: 1rem;">

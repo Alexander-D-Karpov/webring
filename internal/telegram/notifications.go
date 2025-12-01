@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"webring/internal/models"
@@ -42,6 +43,13 @@ func isDebugMode() bool {
 		}
 	}
 	return false
+}
+
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }
 
 func NotifyAdminsOfNewRequest(db *sql.DB, request *models.UpdateRequest, user *models.User) {
@@ -226,20 +234,271 @@ func NotifyUserOfApprovedRequest(request *models.UpdateRequest, user *models.Use
 			siteName = name
 		}
 		siteNameEsc := escapeMarkdownV2(siteName)
-		message = fmt.Sprintf("*Request Approved*\n\nYour site submission has been approved\\!\n\n"+
-			"*Site:* %s\n\nYour site is now part of the webring\\.", siteNameEsc)
+
+		template := getEnvOrDefault(
+			"TELEGRAM_MESSAGE_SITE_CREATED",
+			"*Request Approved*\n\n"+
+				"Your site submission has been approved\\!\n\n"+
+				"*Site:* %s\n\nYour site is now part of the webring\\.",
+		)
+
+		if strings.Contains(template, "%s") {
+			message = fmt.Sprintf(template, siteNameEsc)
+		} else {
+			message = template
+		}
+
 	case "update":
-		message = "*Update Approved*\n\nYour site update request has been approved and the changes have been applied\\."
+		template := getEnvOrDefault(
+			"TELEGRAM_MESSAGE_SITE_UPDATED",
+			"*Update Approved*\n\nYour site update request has been approved and the changes have been applied\\.",
+		)
+		message = template
+
 		if len(request.ChangedFields) > 0 {
-			message += "\n\n*Applied changes:*\n"
+			changesTemplate := getEnvOrDefault(
+				"TELEGRAM_MESSAGE_CHANGES_LIST",
+				"\n\n*Applied changes:*\n",
+			)
+			message += changesTemplate
+
 			for field, value := range request.ChangedFields {
 				fieldEsc := escapeMarkdownV2(field)
 				valueStr := fmt.Sprintf("%v", value)
 				valueEsc := escapeMarkdownV2(valueStr)
-				message += fmt.Sprintf("• *%s:* %s\n", fieldEsc, valueEsc)
+
+				itemTemplate := getEnvOrDefault(
+					"TELEGRAM_MESSAGE_CHANGE_ITEM",
+					"• *%s:* %s\n",
+				)
+
+				if strings.Count(itemTemplate, "%s") >= 2 {
+					message += fmt.Sprintf(itemTemplate, fieldEsc, valueEsc)
+				} else {
+					message += itemTemplate
+				}
 			}
 		}
 	}
 
 	SendMessage(botToken, user.TelegramID, message)
+}
+
+func NotifyUserOfDeclinedRequest(request *models.UpdateRequest, user *models.User) {
+	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	if botToken == "" || user.TelegramID == 0 {
+		return
+	}
+
+	var message string
+	switch request.RequestType {
+	case "create":
+		siteName := "your site"
+		if name, ok := request.ChangedFields["name"].(string); ok {
+			siteName = name
+		}
+		siteNameEsc := escapeMarkdownV2(siteName)
+
+		template := getEnvOrDefault(
+			"TELEGRAM_MESSAGE_REQUEST_DECLINED_CREATE",
+			"*Request Declined*\n\n"+
+				"Your site submission request for *%s* has been declined by an administrator\\.\n\n"+
+				"If you have questions, please contact the webring administrator\\.",
+		)
+
+		if strings.Contains(template, "%s") {
+			message = fmt.Sprintf(template, siteNameEsc)
+		} else {
+			message = template
+		}
+
+	case "update":
+		siteInfo := "your site"
+		if request.Site != nil {
+			siteInfo = request.Site.Name
+		}
+		siteInfoEsc := escapeMarkdownV2(siteInfo)
+
+		template := getEnvOrDefault(
+			"TELEGRAM_MESSAGE_REQUEST_DECLINED_UPDATE",
+			"*Update Request Declined*\n\n"+
+				"Your update request for *%s* has been declined by an administrator\\.\n\n"+
+				"If you have questions, please contact the webring administrator\\.",
+		)
+
+		if strings.Contains(template, "%s") {
+			message = fmt.Sprintf(template, siteInfoEsc)
+		} else {
+			message = template
+		}
+	}
+
+	SendMessage(botToken, user.TelegramID, message)
+}
+
+func NotifyAdminsOfAction(db *sql.DB, action string, request *models.UpdateRequest, performedBy *models.User) {
+	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	if botToken == "" {
+		if isDebugMode() {
+			log.Printf("TELEGRAM_BOT_TOKEN not set, skipping admin notification")
+		}
+		return
+	}
+
+	admins, err := getAdminTelegramIDs(db)
+	if err != nil {
+		log.Printf("Error fetching admin Telegram IDs: %v", err)
+		return
+	}
+
+	if len(admins) == 0 {
+		if isDebugMode() {
+			log.Printf("No admins with Telegram IDs found")
+		}
+		return
+	}
+
+	message := formatAdminActionMessage(action, request, performedBy)
+
+	for _, adminID := range admins {
+		if adminID == performedBy.TelegramID {
+			continue
+		}
+		go SendMessage(botToken, adminID, message)
+	}
+}
+
+func formatAdminActionMessage(action string, request *models.UpdateRequest, performedBy *models.User) string {
+	var message string
+
+	adminName := "Admin"
+	if performedBy.FirstName != nil && *performedBy.FirstName != "" {
+		adminName = *performedBy.FirstName
+		if performedBy.LastName != nil && *performedBy.LastName != "" {
+			adminName += " " + *performedBy.LastName
+		}
+	} else if performedBy.TelegramUsername != nil && *performedBy.TelegramUsername != "" {
+		adminName = "@" + *performedBy.TelegramUsername
+	}
+	adminNameEsc := escapeMarkdownV2(adminName)
+
+	userName := "Unknown User"
+	if request.User != nil {
+		if request.User.FirstName != nil && *request.User.FirstName != "" {
+			userName = *request.User.FirstName
+			if request.User.LastName != nil && *request.User.LastName != "" {
+				userName += " " + *request.User.LastName
+			}
+		} else if request.User.TelegramUsername != nil && *request.User.TelegramUsername != "" {
+			userName = "@" + *request.User.TelegramUsername
+		}
+	}
+	userNameEsc := escapeMarkdownV2(userName)
+
+	switch action {
+	case "approved":
+		switch request.RequestType {
+		case "create":
+			siteName := "Unknown Site"
+			if name, ok := request.ChangedFields["name"].(string); ok {
+				siteName = name
+			}
+			siteNameEsc := escapeMarkdownV2(siteName)
+
+			template := getEnvOrDefault(
+				"TELEGRAM_MESSAGE_ADMIN_APPROVED_CREATE",
+				"*Request Approved*\n\n*Admin:* %s\n*Action:* Approved site creation\n*User:* %s\n*Site:* %s",
+			)
+
+			if strings.Count(template, "%s") >= 3 {
+				message = fmt.Sprintf(template, adminNameEsc, userNameEsc, siteNameEsc)
+			} else {
+				message = template
+			}
+
+		case "update":
+			siteName := "Unknown Site"
+			if request.Site != nil {
+				siteName = request.Site.Name
+			}
+			siteNameEsc := escapeMarkdownV2(siteName)
+
+			template := getEnvOrDefault(
+				"TELEGRAM_MESSAGE_ADMIN_APPROVED_UPDATE",
+				"*Update Approved*\n\n*Admin:* %s\n*Action:* Approved site update\n*User:* %s\n*Site:* %s",
+			)
+
+			if strings.Count(template, "%s") >= 3 {
+				message = fmt.Sprintf(template, adminNameEsc, userNameEsc, siteNameEsc)
+			} else {
+				message = template
+			}
+
+			if len(request.ChangedFields) > 0 {
+				changesTemplate := getEnvOrDefault(
+					"TELEGRAM_MESSAGE_ADMIN_CHANGES_LIST",
+					"\n\n*Changes:*\n",
+				)
+				message += changesTemplate
+
+				for field, value := range request.ChangedFields {
+					fieldEsc := escapeMarkdownV2(field)
+					valueStr := fmt.Sprintf("%v", value)
+					valueEsc := escapeMarkdownV2(valueStr)
+
+					itemTemplate := getEnvOrDefault(
+						"TELEGRAM_MESSAGE_ADMIN_CHANGE_ITEM",
+						"• *%s:* %s\n",
+					)
+
+					if strings.Count(itemTemplate, "%s") >= 2 {
+						message += fmt.Sprintf(itemTemplate, fieldEsc, valueEsc)
+					} else {
+						message += itemTemplate
+					}
+				}
+			}
+		}
+
+	case "declined":
+		switch request.RequestType {
+		case "create":
+			siteName := "Unknown Site"
+			if name, ok := request.ChangedFields["name"].(string); ok {
+				siteName = name
+			}
+			siteNameEsc := escapeMarkdownV2(siteName)
+
+			template := getEnvOrDefault(
+				"TELEGRAM_MESSAGE_ADMIN_DECLINED_CREATE",
+				"*Request Declined*\n\n*Admin:* %s\n*Action:* Declined site creation\n*User:* %s\n*Site:* %s",
+			)
+
+			if strings.Count(template, "%s") >= 3 {
+				message = fmt.Sprintf(template, adminNameEsc, userNameEsc, siteNameEsc)
+			} else {
+				message = template
+			}
+
+		case "update":
+			siteName := "Unknown Site"
+			if request.Site != nil {
+				siteName = request.Site.Name
+			}
+			siteNameEsc := escapeMarkdownV2(siteName)
+
+			template := getEnvOrDefault(
+				"TELEGRAM_MESSAGE_ADMIN_DECLINED_UPDATE",
+				"*Update Declined*\n\n*Admin:* %s\n*Action:* Declined site update\n*User:* %s\n*Site:* %s",
+			)
+
+			if strings.Count(template, "%s") >= 3 {
+				message = fmt.Sprintf(template, adminNameEsc, userNameEsc, siteNameEsc)
+			} else {
+				message = template
+			}
+		}
+	}
+
+	return message
 }

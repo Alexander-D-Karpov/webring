@@ -47,6 +47,17 @@
 </header>
 
 <main>
+    {{if .Error}}
+    <div class="error-banner">
+        <div class="error-banner-icon">
+            <i class="ri-error-warning-line"></i>
+        </div>
+        <div class="error-banner-content">
+            <span class="error-banner-text">{{.Error}}</span>
+        </div>
+    </div>
+    {{end}}
+
     <div class="content-header">
         <div class="content-title">
             <h2>Your Sites</h2>

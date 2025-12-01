@@ -3,6 +3,7 @@ package user
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"html"
 	"log"
 	"net/http"
@@ -68,11 +69,13 @@ func userDashboardHandler(db *sql.DB) http.HandlerFunc {
 			Sites    []models.Site
 			Requests []models.UpdateRequest
 			Request  *http.Request
+			Error    string
 		}{
 			User:     user,
 			Sites:    sites,
 			Requests: requests,
 			Request:  r,
+			Error:    "",
 		}
 
 		if err = t.ExecuteTemplate(w, "user_dashboard.html", data); err != nil {
@@ -80,6 +83,50 @@ func userDashboardHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "Error rendering template", http.StatusInternalServerError)
 			return
 		}
+	}
+}
+
+func renderDashboardWithError(w http.ResponseWriter, r *http.Request,
+	db *sql.DB, user *models.User, errorMsg string, statusCode int) {
+	templatesMu.RLock()
+	t := templates
+	templatesMu.RUnlock()
+
+	if t == nil {
+		http.Error(w, errorMsg, statusCode)
+		return
+	}
+
+	sites, sitesErr := getUserSites(db, user.ID)
+	if sitesErr != nil {
+		log.Printf("Error fetching user sites: %v", sitesErr)
+		sites = []models.Site{}
+	}
+
+	requests, reqErr := getUserRequests(db, user.ID)
+	if reqErr != nil {
+		log.Printf("Error fetching user requests: %v", reqErr)
+		requests = []models.UpdateRequest{}
+	}
+
+	data := struct {
+		User     *models.User
+		Sites    []models.Site
+		Requests []models.UpdateRequest
+		Request  *http.Request
+		Error    string
+	}{
+		User:     user,
+		Sites:    sites,
+		Requests: requests,
+		Request:  r,
+		Error:    errorMsg,
+	}
+
+	w.WriteHeader(statusCode)
+	if err := t.ExecuteTemplate(w, "user_dashboard.html", data); err != nil {
+		log.Printf("Error rendering user dashboard template: %v", err)
+		http.Error(w, errorMsg, statusCode)
 	}
 }
 
@@ -112,6 +159,40 @@ func createSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 
 		if !slugRegex.MatchString(slug) {
 			http.Error(w, "Invalid Slug", http.StatusBadRequest)
+			return
+		}
+
+		var existingID int
+		err := db.QueryRow("SELECT id FROM sites WHERE slug = $1", slug).Scan(&existingID)
+		if err == nil {
+			renderDashboardWithError(w, r, db, user,
+				fmt.Sprintf("Slug '%s' is already in use. Please choose a different slug.", slug),
+				http.StatusConflict)
+			return
+		}
+		if err != sql.ErrNoRows {
+			log.Printf("Error checking slug availability: %v", err)
+			http.Error(w, "Error checking slug availability", http.StatusInternalServerError)
+			return
+		}
+
+		var pendingCount int
+		err = db.QueryRow(`
+			SELECT COUNT(*) FROM update_requests 
+			WHERE user_id = $1 AND request_type = 'create'
+			AND changed_fields->>'slug' = $2
+		`, user.ID, slug).Scan(&pendingCount)
+		if err != nil {
+			log.Printf("Error checking pending requests: %v", err)
+			http.Error(w, "Error checking pending requests", http.StatusInternalServerError)
+			return
+		}
+
+		if pendingCount > 0 {
+			renderDashboardWithError(w, r, db, user,
+				fmt.Sprintf("You already have a pending request with slug '%s'. "+
+					"Please wait for it to be reviewed or choose a different slug.", slug),
+				http.StatusConflict)
 			return
 		}
 
@@ -184,6 +265,21 @@ func updateSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 				http.Error(w, "Invalid Slug", http.StatusBadRequest)
 				return
 			}
+
+			var existingID int
+			err = db.QueryRow("SELECT id FROM sites WHERE slug = $1 AND id != $2", newSlug, siteID).Scan(&existingID)
+			if err == nil {
+				renderDashboardWithError(w, r, db, user,
+					fmt.Sprintf("Slug '%s' is already in use. Please choose a different slug.", newSlug),
+					http.StatusConflict)
+				return
+			}
+			if err != sql.ErrNoRows {
+				log.Printf("Error checking slug availability: %v", err)
+				http.Error(w, "Error checking slug availability", http.StatusInternalServerError)
+				return
+			}
+
 			changedFields["slug"] = newSlug
 		}
 

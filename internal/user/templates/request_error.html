@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Request Error - Webring</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <link rel="preconnect" href="https://rsms.me/">
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
+</head>
+<body>
+<header class="admin-header">
+    <div class="header-content">
+        <div class="header-left">
+            <a href="/admin" class="logo-link">
+                <div class="logo">
+                    <i class="ri-bubble-chart-fill"></i>
+                    <span class="logo-text">Webring</span>
+                </div>
+            </a>
+            <div class="page-info">
+                <h1>Request Error</h1>
+            </div>
+        </div>
+        <div class="header-right">
+            <nav class="header-nav">
+                <a href="/admin/requests" class="nav-item">
+                    <i class="ri-arrow-left-line"></i>
+                    <span>Back to Requests</span>
+                </a>
+            </nav>
+        </div>
+    </div>
+</header>
+
+<main>
+    <div class="error-card">
+        <div class="error-icon">
+            <i class="ri-error-warning-line"></i>
+        </div>
+        <div class="error-content">
+            <h2>Unable to Process Request</h2>
+            <p class="error-message">{{.Error}}</p>
+
+            {{if .Request}}
+            <div class="error-details">
+                <h3>Request Details</h3>
+                {{if eq .Request.RequestType "create"}}
+                <p><strong>Type:</strong> Site Creation</p>
+                {{else}}
+                <p><strong>Type:</strong> Site Update</p>
+                {{end}}
+
+                {{if .Request.ChangedFields}}
+                <div class="changed-fields">
+                    <strong>Requested Fields:</strong>
+                    <ul>
+                        {{range $key, $value := .Request.ChangedFields}}
+                        <li><strong>{{$key}}:</strong> {{$value}}</li>
+                        {{end}}
+                    </ul>
+                </div>
+                {{end}}
+            </div>
+            {{end}}
+
+            <div class="error-actions">
+                <a href="/admin/requests" class="btn btn-primary">
+                    <i class="ri-arrow-left-line"></i>
+                    Back to Requests
+                </a>
+            </div>
+
+            <div class="error-note">
+                <p><strong>Note:</strong> The request has not been deleted and can still be reviewed. You may need to contact the user to choose a different slug or make other changes.</p>
+            </div>
+        </div>
+    </div>
+</main>
+</body>
+</html>

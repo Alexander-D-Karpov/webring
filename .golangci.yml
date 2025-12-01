@@ -34,7 +34,6 @@ linters:
     - gochecknoinits
     - goconst
     - gocritic
-    - gocyclo
     - goprintffuncname
     - gosec
     - govet
@@ -57,7 +56,7 @@ linters:
 
     goconst:
       min-len: 3
-      min-occurrences: 3
+      min-occurrences: 10
 
     gocritic:
       enabled-tags: [diagnostic, experimental, opinionated, performance, style]

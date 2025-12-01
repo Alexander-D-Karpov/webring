@@ -164,6 +164,39 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		var existingID int
+		err := db.QueryRow("SELECT id FROM sites WHERE slug = $1", slug).Scan(&existingID)
+		if err == nil {
+			templatesMu.RLock()
+			t := templates
+			templatesMu.RUnlock()
+
+			if t == nil {
+				http.Error(w, fmt.Sprintf("Slug '%s' is already in use", slug), http.StatusConflict)
+				return
+			}
+
+			data := struct {
+				Error   string
+				Request *http.Request
+			}{
+				Error:   fmt.Sprintf("The slug '%s' is already in use. Please choose a different slug and try again.", slug),
+				Request: r,
+			}
+
+			w.WriteHeader(http.StatusConflict)
+			if err = t.ExecuteTemplate(w, "submit_site.html", data); err != nil {
+				log.Printf("Error rendering submit site template: %v", err)
+				http.Error(w, fmt.Sprintf("Slug '%s' is already in use", slug), http.StatusConflict)
+			}
+			return
+		}
+		if err != sql.ErrNoRows {
+			log.Printf("Error checking slug availability: %v", err)
+			http.Error(w, "Error checking slug availability", http.StatusInternalServerError)
+			return
+		}
+
 		var userID *int
 		var submittingUser *models.User
 

@@ -177,11 +177,73 @@ func rejectRequestHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		var req models.UpdateRequest
+		var changedFieldsJSON []byte
+		var userTgID sql.NullInt64
+		var userTgUsername, userFirstName, userLastName sql.NullString
+		var siteSlug, siteName, siteURL sql.NullString
+
+		err = db.QueryRow(`
+			SELECT ur.user_id, ur.site_id, ur.request_type, ur.changed_fields,
+			       u.telegram_id, u.telegram_username, u.first_name, u.last_name,
+			       s.slug, s.name, s.url
+			FROM update_requests ur
+			JOIN users u ON ur.user_id = u.id
+			LEFT JOIN sites s ON ur.site_id = s.id
+			WHERE ur.id = $1
+		`, requestID).Scan(&req.UserID, &req.SiteID, &req.RequestType, &changedFieldsJSON,
+			&userTgID, &userTgUsername, &userFirstName, &userLastName,
+			&siteSlug, &siteName, &siteURL)
+
+		if err != nil {
+			if err == sql.ErrNoRows {
+				http.Error(w, "Request not found", http.StatusNotFound)
+			} else {
+				log.Printf("Error fetching request: %v", err)
+				http.Error(w, "Error fetching request", http.StatusInternalServerError)
+			}
+			return
+		}
+
+		if err = json.Unmarshal(changedFieldsJSON, &req.ChangedFields); err != nil {
+			log.Printf("Error unmarshaling changed fields: %v", err)
+			http.Error(w, "Error processing request", http.StatusInternalServerError)
+			return
+		}
+
+		req.User = &models.User{
+			TelegramID: func() int64 {
+				if userTgID.Valid {
+					return userTgID.Int64
+				}
+				return 0
+			}(),
+			TelegramUsername: &userTgUsername.String,
+			FirstName:        &userFirstName.String,
+			LastName:         &userLastName.String,
+		}
+
+		if req.SiteID != nil {
+			req.Site = &models.Site{
+				Slug: siteSlug.String,
+				Name: siteName.String,
+				URL:  siteURL.String,
+			}
+		}
+
 		if _, err = db.Exec("DELETE FROM update_requests WHERE id = $1", requestID); err != nil {
 			log.Printf("Error deleting request: %v", err)
 			http.Error(w, "Error rejecting request", http.StatusInternalServerError)
 			return
 		}
+
+		go func() {
+			if userTgID.Valid && userTgID.Int64 != 0 {
+				telegram.NotifyUserOfDeclinedRequest(&req, req.User)
+			}
+
+			telegram.NotifyAdminsOfAction(db, "declined", &req, user)
+		}()
 
 		http.Redirect(w, r, "/admin/requests", http.StatusSeeOther)
 	}
@@ -268,14 +330,19 @@ func approveRequestHandler(db *sql.DB) http.HandlerFunc {
 		var changedFieldsJSON []byte
 		var userTgID sql.NullInt64
 		var userTgUsername, userFirstName, userLastName sql.NullString
+		var siteSlug, siteName, siteURL sql.NullString
+
 		err = db.QueryRow(`
 			SELECT ur.user_id, ur.site_id, ur.request_type, ur.changed_fields,
-			       u.telegram_id, u.telegram_username, u.first_name, u.last_name
+			       u.telegram_id, u.telegram_username, u.first_name, u.last_name,
+			       s.slug, s.name, s.url
 			FROM update_requests ur
 			JOIN users u ON ur.user_id = u.id
+			LEFT JOIN sites s ON ur.site_id = s.id
 			WHERE ur.id = $1
 		`, requestID).Scan(&req.UserID, &req.SiteID, &req.RequestType, &changedFieldsJSON,
-			&userTgID, &userTgUsername, &userFirstName, &userLastName)
+			&userTgID, &userTgUsername, &userFirstName, &userLastName,
+			&siteSlug, &siteName, &siteURL)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				http.Error(w, "Request not found", http.StatusNotFound)
@@ -292,15 +359,58 @@ func approveRequestHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		if req.RequestType == "create" {
-			err = createSiteFromRequest(db, &req)
-		} else {
-			err = updateSiteFromRequest(db, &req)
+		req.User = &models.User{
+			TelegramID: func() int64 {
+				if userTgID.Valid {
+					return userTgID.Int64
+				}
+				return 0
+			}(),
+			TelegramUsername: &userTgUsername.String,
+			FirstName:        &userFirstName.String,
+			LastName:         &userLastName.String,
 		}
 
-		if err != nil {
-			log.Printf("Error applying request: %v", err)
-			http.Error(w, "Error applying changes", http.StatusInternalServerError)
+		if req.SiteID != nil {
+			req.Site = &models.Site{
+				Slug: siteSlug.String,
+				Name: siteName.String,
+				URL:  siteURL.String,
+			}
+		}
+
+		var applyErr error
+		if req.RequestType == "create" {
+			applyErr = createSiteFromRequest(db, &req)
+		} else {
+			applyErr = updateSiteFromRequest(db, &req)
+		}
+
+		if applyErr != nil {
+			log.Printf("Error applying request: %v", applyErr)
+
+			templatesMu.RLock()
+			t := templates
+			templatesMu.RUnlock()
+
+			if t == nil {
+				http.Error(w, fmt.Sprintf("Error applying changes: %v", applyErr), http.StatusInternalServerError)
+				return
+			}
+
+			data := struct {
+				Error   string
+				Request *models.UpdateRequest
+			}{
+				Error:   applyErr.Error(),
+				Request: &req,
+			}
+
+			w.WriteHeader(http.StatusBadRequest)
+			if err = t.ExecuteTemplate(w, "request_error.html", data); err != nil {
+				log.Printf("Error rendering error template: %v", err)
+				http.Error(w, fmt.Sprintf("Error applying changes: %v", applyErr), http.StatusInternalServerError)
+			}
 			return
 		}
 
@@ -310,14 +420,10 @@ func approveRequestHandler(db *sql.DB) http.HandlerFunc {
 
 		go func() {
 			if userTgID.Valid && userTgID.Int64 != 0 {
-				userForNotification := &models.User{
-					TelegramID:       userTgID.Int64,
-					TelegramUsername: &userTgUsername.String,
-					FirstName:        &userFirstName.String,
-					LastName:         &userLastName.String,
-				}
-				telegram.NotifyUserOfApprovedRequest(&req, userForNotification)
+				telegram.NotifyUserOfApprovedRequest(&req, req.User)
 			}
+
+			telegram.NotifyAdminsOfAction(db, "approved", &req, user)
 		}()
 
 		http.Redirect(w, r, "/admin/requests", http.StatusSeeOther)
@@ -372,9 +478,26 @@ func createSiteFromRequest(db *sql.DB, req *models.UpdateRequest) error {
 		return fmt.Errorf("missing required fields")
 	}
 
+	var existingID int
+	err := db.QueryRow("SELECT id FROM sites WHERE slug = $1", slug).Scan(&existingID)
+	if err == nil {
+		return fmt.Errorf("slug '%s' is already in use by site ID %d", slug, existingID)
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("error checking slug availability: %w", err)
+	}
+
 	var nextID int
-	if err := db.QueryRow("SELECT COALESCE(MAX(id), 0) + 1 FROM sites").Scan(&nextID); err != nil {
+	if err = db.QueryRow("SELECT COALESCE(MAX(id), 0) + 1 FROM sites").Scan(&nextID); err != nil {
 		return fmt.Errorf("error getting next ID: %w", err)
+	}
+
+	err = db.QueryRow("SELECT id FROM sites WHERE id = $1", nextID).Scan(&existingID)
+	if err == nil {
+		return fmt.Errorf("ID %d is already in use", nextID)
+	}
+	if err != sql.ErrNoRows {
+		return fmt.Errorf("error checking ID availability: %w", err)
 	}
 
 	var maxDisplayOrder int

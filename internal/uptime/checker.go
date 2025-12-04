@@ -28,6 +28,7 @@ const (
 	idleTimeout        = 90 * time.Second
 	serverErrorCode    = 500
 	logPerm            = 0o644
+	userAgent          = "webring-checker (+https://otor.ing)"
 )
 
 type Checker struct {
@@ -404,6 +405,7 @@ func (c *Checker) doCheckSite(site *models.Site, useProxy bool) (isUp bool, resp
 		c.debugLogf("Request creation failed for %s: %v", siteURL, err)
 		return false, 0, errorMsg
 	}
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := client.Do(req)
 	elapsed := time.Since(start).Seconds()

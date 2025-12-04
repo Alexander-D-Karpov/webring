@@ -568,8 +568,8 @@ func getAllSites(db *sql.DB) ([]models.Site, error) {
 }
 
 func sanitizeTelegramUsername(username string) string {
-	username = strings.TrimPrefix(strings.TrimSpace(username), "@")
-	if matched, err := regexp.MatchString("^[a-zA-Z0-9_]{4,32}$", username); !matched {
+	username = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(username), "@"))
+	if matched, err := regexp.MatchString("^[a-z0-9_]{4,32}$", username); !matched {
 		if err != nil {
 			log.Printf("Error validating Telegram username: %v", err)
 		} else {
@@ -581,9 +581,14 @@ func sanitizeTelegramUsername(username string) string {
 }
 
 func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, error) {
-	var userID int
+	if username == "" {
+		return nil, nil
+	}
 
-	err := db.QueryRow("SELECT id FROM users WHERE telegram_username = $1", username).Scan(&userID)
+	var userID int
+	usernameLower := strings.ToLower(username)
+
+	err := db.QueryRow("SELECT id FROM users WHERE LOWER(telegram_username) = LOWER($1)", usernameLower).Scan(&userID)
 	if err == nil {
 		return &userID, nil
 	}
@@ -596,12 +601,12 @@ func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, erro
 		INSERT INTO users (telegram_username, telegram_id) 
 		VALUES ($1, NULL) 
 		RETURNING id
-	`, username).Scan(&userID)
+	`, usernameLower).Scan(&userID)
 
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code.Name() == uniqueViolation {
-			err = db.QueryRow("SELECT id FROM users WHERE telegram_username = $1", username).Scan(&userID)
+			err = db.QueryRow("SELECT id FROM users WHERE LOWER(telegram_username) = LOWER($1)", usernameLower).Scan(&userID)
 			if err == nil {
 				return &userID, nil
 			}

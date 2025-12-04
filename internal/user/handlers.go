@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"webring/internal/auth"
@@ -298,11 +299,16 @@ func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error
 		if telegramID.Valid {
 			user.TelegramID = telegramID.Int64
 		}
+		var usernameLower *string
+		if tgUser.Username != "" {
+			lower := strings.ToLower(tgUser.Username)
+			usernameLower = &lower
+		}
 		_, updateErr := db.Exec(`
 			UPDATE users 
 			SET telegram_username = $1, first_name = $2, last_name = $3
 			WHERE telegram_id = $4
-		`, &tgUser.Username, &tgUser.FirstName, &tgUser.LastName, tgUser.ID)
+		`, usernameLower, &tgUser.FirstName, &tgUser.LastName, tgUser.ID)
 		if updateErr != nil {
 			log.Printf("Warning: Could not update user info: %v", updateErr)
 		}
@@ -313,44 +319,53 @@ func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error
 		return nil, fmt.Errorf("error querying user by telegram_id: %w", err)
 	}
 
-	err = db.QueryRow(`
-		SELECT id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at
-		FROM users 
-		WHERE telegram_username = $1 AND telegram_id IS NULL
-	`, &tgUser.Username).Scan(
-		&user.ID, &telegramID, &user.TelegramUsername,
-		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
+	if tgUser.Username != "" {
+		usernameLower := strings.ToLower(tgUser.Username)
+		err = db.QueryRow(`
+			SELECT id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at
+			FROM users 
+			WHERE LOWER(telegram_username) = LOWER($1) AND telegram_id IS NULL
+		`, usernameLower).Scan(
+			&user.ID, &telegramID, &user.TelegramUsername,
+			&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 
-	if err == nil {
-		_, updateErr := db.Exec(`
-			UPDATE users 
-			SET telegram_id = $1, first_name = $2, last_name = $3
-			WHERE id = $4 AND telegram_id IS NULL
-		`, tgUser.ID, &tgUser.FirstName, &tgUser.LastName, user.ID)
+		if err == nil {
+			_, updateErr := db.Exec(`
+				UPDATE users 
+				SET telegram_id = $1, first_name = $2, last_name = $3, telegram_username = $4
+				WHERE id = $5 AND telegram_id IS NULL
+			`, tgUser.ID, &tgUser.FirstName, &tgUser.LastName, usernameLower, user.ID)
 
-		if updateErr != nil {
-			return nil, fmt.Errorf("error updating placeholder account: %w", updateErr)
+			if updateErr != nil {
+				return nil, fmt.Errorf("error updating placeholder account: %w", updateErr)
+			}
+
+			user.TelegramID = tgUser.ID
+			user.FirstName = &tgUser.FirstName
+			user.LastName = &tgUser.LastName
+
+			log.Printf("Mapped placeholder account @%s (ID: %d) to telegram user %d",
+				tgUser.Username, user.ID, tgUser.ID)
+
+			return &user, nil
 		}
 
-		user.TelegramID = tgUser.ID
-		user.FirstName = &tgUser.FirstName
-		user.LastName = &tgUser.LastName
-
-		log.Printf("Mapped placeholder account @%s (ID: %d) to telegram user %d",
-			tgUser.Username, user.ID, tgUser.ID)
-
-		return &user, nil
+		if err != sql.ErrNoRows {
+			return nil, fmt.Errorf("error checking for placeholder account: %w", err)
+		}
 	}
 
-	if err != sql.ErrNoRows {
-		return nil, fmt.Errorf("error checking for placeholder account: %w", err)
+	var usernameLower *string
+	if tgUser.Username != "" {
+		lower := strings.ToLower(tgUser.Username)
+		usernameLower = &lower
 	}
 
 	err = db.QueryRow(`
 		INSERT INTO users (telegram_id, telegram_username, first_name, last_name)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, telegram_id, telegram_username, first_name, last_name, is_admin, created_at
-	`, tgUser.ID, &tgUser.Username, &tgUser.FirstName, &tgUser.LastName).Scan(
+	`, tgUser.ID, usernameLower, &tgUser.FirstName, &tgUser.LastName).Scan(
 		&user.ID, &telegramID, &user.TelegramUsername,
 		&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 

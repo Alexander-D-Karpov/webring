@@ -39,6 +39,7 @@
                 API Docs
             </a>
             <form action="/logout" method="POST" style="display: inline;">
+                {{csrfField .Request}}
                 <button type="submit" class="user-action logout">
                     <i class="ri-logout-circle-line"></i>
                     Logout

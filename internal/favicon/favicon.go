@@ -29,13 +29,29 @@ func GetAndStoreFavicon(siteURL, mediaFolder string, siteID int) (string, error)
 		return "", err
 	}
 
+	rootURL := &url.URL{
+		Scheme: baseURL.Scheme,
+		Host:   baseURL.Host,
+	}
+
 	faviconURL, err := getFaviconFromHTML(baseURL)
 	if err == nil {
-		faviconPath, err := downloadFavicon(faviconURL, baseURL, mediaFolder, siteID)
-		if err == nil {
+		faviconPath, dlErr := downloadFavicon(faviconURL, baseURL, mediaFolder, siteID)
+		if dlErr == nil {
 			return faviconPath, nil
 		}
-		log.Printf("Failed to download favicon from HTML link: %v", err)
+		log.Printf("Failed to download favicon from HTML link: %v", dlErr)
+	}
+
+	if baseURL.Path != "" && baseURL.Path != "/" {
+		faviconURL, err = getFaviconFromHTML(rootURL)
+		if err == nil {
+			faviconPath, dlErr := downloadFavicon(faviconURL, rootURL, mediaFolder, siteID)
+			if dlErr == nil {
+				return faviconPath, nil
+			}
+			log.Printf("Failed to download favicon from root HTML link: %v", dlErr)
+		}
 	}
 
 	commonFaviconNames := []string{
@@ -50,11 +66,22 @@ func GetAndStoreFavicon(siteURL, mediaFolder string, siteID int) (string, error)
 
 	for _, name := range commonFaviconNames {
 		faviconURL := baseURL.ResolveReference(&url.URL{Path: name})
-		faviconPath, err := downloadFavicon(faviconURL, baseURL, mediaFolder, siteID)
-		if err == nil {
+		faviconPath, dlErr := downloadFavicon(faviconURL, baseURL, mediaFolder, siteID)
+		if dlErr == nil {
 			return faviconPath, nil
 		}
-		log.Printf("Failed to download %s: %v", name, err)
+		log.Printf("Failed to download %s from base path: %v", name, dlErr)
+	}
+
+	if baseURL.Path != "" && baseURL.Path != "/" {
+		for _, name := range commonFaviconNames {
+			faviconURL := rootURL.ResolveReference(&url.URL{Path: "/" + name})
+			faviconPath, dlErr := downloadFavicon(faviconURL, rootURL, mediaFolder, siteID)
+			if dlErr == nil {
+				return faviconPath, nil
+			}
+			log.Printf("Failed to download %s from root: %v", name, dlErr)
+		}
 	}
 
 	return "", errors.New("failed to find and download favicon")
@@ -100,10 +127,22 @@ func getFaviconFromHTML(baseURL *url.URL) (*url.URL, error) {
 	var faviconURL string
 	var exists bool
 
-	doc.Find("link[rel='icon'], link[rel='shortcut icon']").EachWithBreak(func(_ int, s *goquery.Selection) bool {
-		faviconURL, exists = s.Attr("href")
-		return !exists
-	})
+	selectors := []string{
+		"link[rel='icon']",
+		"link[rel='shortcut icon']",
+		"link[rel='apple-touch-icon']",
+		"link[rel='apple-touch-icon-precomposed']",
+	}
+
+	for _, selector := range selectors {
+		doc.Find(selector).EachWithBreak(func(_ int, s *goquery.Selection) bool {
+			faviconURL, exists = s.Attr("href")
+			return !exists
+		})
+		if exists {
+			break
+		}
+	}
 
 	if !exists {
 		log.Printf("No favicon link found for site: %s", baseURL.String())
@@ -170,6 +209,11 @@ func downloadFavicon(faviconURL, baseURL *url.URL, mediaFolder string, siteID in
 		return "", fmt.Errorf("failed to download favicon: status code %d", resp.StatusCode)
 	}
 
+	contentType := resp.Header.Get("Content-Type")
+	if contentType != "" && !isImageContentType(contentType) {
+		return "", fmt.Errorf("invalid content type: %s", contentType)
+	}
+
 	hasher := sha256.New()
 	if _, hashErr := fmt.Fprintf(hasher, "%d-%s", siteID, faviconURL); hashErr != nil {
 		return "", hashErr
@@ -177,8 +221,8 @@ func downloadFavicon(faviconURL, baseURL *url.URL, mediaFolder string, siteID in
 	hash := hex.EncodeToString(hasher.Sum(nil))
 
 	ext := filepath.Ext(faviconURL.Path)
-	if ext == "" {
-		ext = ".ico"
+	if ext == "" || len(ext) > 5 {
+		ext = extFromContentType(contentType)
 	}
 
 	fileName := fmt.Sprintf("favicon-%d-%s%s", siteID, hash[:8], ext)
@@ -209,4 +253,40 @@ func downloadFavicon(faviconURL, baseURL *url.URL, mediaFolder string, siteID in
 	}
 
 	return fileName, nil
+}
+
+func isImageContentType(contentType string) bool {
+	contentType = strings.ToLower(strings.Split(contentType, ";")[0])
+	validTypes := []string{
+		"image/",
+		"application/octet-stream",
+		"image/x-icon",
+		"image/vnd.microsoft.icon",
+	}
+	for _, valid := range validTypes {
+		if strings.HasPrefix(contentType, valid) || contentType == valid {
+			return true
+		}
+	}
+	return false
+}
+
+func extFromContentType(contentType string) string {
+	contentType = strings.ToLower(strings.Split(contentType, ";")[0])
+	switch contentType {
+	case "image/png":
+		return ".png"
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/svg+xml":
+		return ".svg"
+	case "image/webp":
+		return ".webp"
+	case "image/x-icon", "image/vnd.microsoft.icon":
+		return ".ico"
+	default:
+		return ".ico"
+	}
 }

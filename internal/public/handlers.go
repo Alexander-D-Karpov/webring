@@ -30,6 +30,7 @@ type TemplateData struct {
 	Sites       []models.PublicSite
 	ContactLink string
 	User        *models.User
+	Request     *http.Request
 }
 
 var (
@@ -97,6 +98,7 @@ func listSitesHandler(db *sql.DB) http.HandlerFunc {
 			Sites:       sites,
 			ContactLink: os.Getenv("CONTACT_LINK"),
 			User:        user,
+			Request:     r,
 		}
 
 		if err = t.ExecuteTemplate(w, "sites.html", data); err != nil {
@@ -109,6 +111,11 @@ func listSitesHandler(db *sql.DB) http.HandlerFunc {
 
 func submitSitePageHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if os.Getenv("REQUIRE_LOGIN_FOR_SUBMIT") == "true" {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+
 		templatesMu.RLock()
 		t := templates
 		templatesMu.RUnlock()
@@ -119,8 +126,10 @@ func submitSitePageHandler() http.HandlerFunc {
 		}
 
 		data := struct {
+			Error   string
 			Request *http.Request
 		}{
+			Error:   "",
 			Request: r,
 		}
 
@@ -134,6 +143,20 @@ func submitSitePageHandler() http.HandlerFunc {
 
 func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if os.Getenv("REQUIRE_LOGIN_FOR_SUBMIT") == "true" {
+			sessionID := auth.GetSessionFromRequest(r)
+			if sessionID == "" {
+				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				return
+			}
+			_, err := auth.GetSessionUser(db, sessionID)
+			if err != nil {
+				auth.ClearSessionCookie(w)
+				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				return
+			}
+		}
+
 		slug := sanitizeInput(r.FormValue("slug"))
 		name := sanitizeInput(r.FormValue("name"))
 		url := sanitizeURL(r.FormValue("url"))
@@ -201,7 +224,7 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 		var submittingUser *models.User
 
 		if telegramUsername != "" {
-			telegramUsernameClean := strings.TrimPrefix(strings.TrimSpace(telegramUsername), "@")
+			telegramUsernameClean := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(telegramUsername), "@"))
 			if matched, err := regexp.MatchString("^[a-zA-Z0-9_]{4,32}$", telegramUsernameClean); !matched {
 				if err != nil {
 					log.Printf("Error validating telegram username: %v", err)
@@ -259,7 +282,7 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 					ID: requestUserID,
 					TelegramUsername: func() *string {
 						if telegramUsername != "" {
-							clean := strings.TrimPrefix(telegramUsername, "@")
+							clean := strings.ToLower(strings.TrimPrefix(telegramUsername, "@"))
 							return &clean
 						}
 						return nil
@@ -269,6 +292,7 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 
 			req := &models.UpdateRequest{
 				UserID:        requestUserID,
+				SiteID:        nil,
 				RequestType:   "create",
 				ChangedFields: changedFields,
 				CreatedAt:     time.Now(),
@@ -318,23 +342,41 @@ func getUserByID(db *sql.DB, userID int) (*models.User, error) {
 
 func getOrCreateAnonymousAdminUser(db *sql.DB) (int, error) {
 	var userID int
-	query := "SELECT id FROM users WHERE telegram_id IS NULL AND telegram_username IS NULL LIMIT 1"
-	err := db.QueryRow(query).Scan(&userID)
+
+	err := db.QueryRow(`
+		SELECT id FROM users 
+		WHERE telegram_id IS NULL AND telegram_username IS NULL 
+		LIMIT 1
+		FOR UPDATE
+	`).Scan(&userID)
+
 	if err == nil {
 		return userID, nil
 	}
 
 	if !errors.Is(err, sql.ErrNoRows) {
-		return 0, err
+		return 0, fmt.Errorf("error querying anonymous user: %w", err)
 	}
 
 	err = db.QueryRow(`
 		INSERT INTO users (telegram_username, telegram_id) 
 		VALUES (NULL, NULL) 
+		ON CONFLICT DO NOTHING
 		RETURNING id
 	`).Scan(&userID)
+
 	if err != nil {
-		return 0, err
+		if errors.Is(err, sql.ErrNoRows) {
+			err = db.QueryRow(`
+				SELECT id FROM users 
+				WHERE telegram_id IS NULL AND telegram_username IS NULL 
+				LIMIT 1
+			`).Scan(&userID)
+			if err == nil {
+				return userID, nil
+			}
+		}
+		return 0, fmt.Errorf("error creating anonymous user: %w", err)
 	}
 
 	return userID, nil
@@ -383,9 +425,14 @@ func createUpdateRequest(db *sql.DB, userID int, siteID *int, requestType string
 }
 
 func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, error) {
-	var userID int
+	if username == "" {
+		return nil, nil
+	}
 
-	err := db.QueryRow("SELECT id FROM users WHERE telegram_username = $1", username).Scan(&userID)
+	var userID int
+	usernameLower := strings.ToLower(username)
+
+	err := db.QueryRow("SELECT id FROM users WHERE LOWER(telegram_username) = LOWER($1)", usernameLower).Scan(&userID)
 	if err == nil {
 		return &userID, nil
 	}
@@ -398,12 +445,12 @@ func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, erro
 		INSERT INTO users (telegram_username, telegram_id) 
 		VALUES ($1, NULL) 
 		RETURNING id
-	`, username).Scan(&userID)
+	`, usernameLower).Scan(&userID)
 
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code.Name() == uniqueViolation {
-			err = db.QueryRow("SELECT id FROM users WHERE telegram_username = $1", username).Scan(&userID)
+			err = db.QueryRow("SELECT id FROM users WHERE LOWER(telegram_username) = LOWER($1)", usernameLower).Scan(&userID)
 			if err == nil {
 				return &userID, nil
 			}

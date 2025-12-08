@@ -18,7 +18,7 @@ import (
 // @BasePath /
 
 func RegisterSwaggerHandlers(r *mux.Router) {
-	r.HandleFunc("/docs/swagger.json", swaggerJSONHandler).Methods("GET")
+	r.HandleFunc("/api/docs/swagger.json", swaggerJSONHandler).Methods("GET")
 
 	docsFS, err := fs.Sub(webring.Files, "docs")
 	if err != nil {
@@ -26,7 +26,7 @@ func RegisterSwaggerHandlers(r *mux.Router) {
 		return
 	}
 
-	r.PathPrefix("/docs/").Handler(http.StripPrefix("/docs/", http.FileServer(http.FS(docsFS))))
+	r.PathPrefix("/api/docs/").Handler(http.StripPrefix("/api/docs/", http.FileServer(http.FS(docsFS))))
 }
 
 func swaggerJSONHandler(w http.ResponseWriter, _ *http.Request) {

@@ -3,7 +3,6 @@ package uptime
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,23 +19,47 @@ import (
 )
 
 const (
-	checkInterval      = 5 * time.Minute
-	checkIntervalDebug = 5 * time.Second
-	httpTimeout        = 10 * time.Second
-	tlsTimeout         = 10 * time.Second
-	maxIdleConns       = 100
-	idleTimeout        = 90 * time.Second
-	serverErrorCode    = 500
-	logPerm            = 0o644
-	userAgent          = "webring-checker (+https://otor.ing)"
+	defaultCheckInterval = 5 * time.Minute
+	debugCheckInterval   = 5 * time.Second
+	httpTimeout          = 10 * time.Second
+	tlsTimeout           = 10 * time.Second
+	maxIdleConns         = 100
+	idleTimeout          = 90 * time.Second
+	serverErrorCode      = 500
+	logPerm              = 0o644
+	userAgent            = "webring-checker (+https://otor.ing)"
+	defaultWorkers       = 5
 )
 
+type checkTask struct {
+	site     models.Site
+	useProxy bool
+}
+
+type checkResult struct {
+	siteID       int
+	siteName     string
+	userID       *int
+	isUp         bool
+	responseTime float64
+	errorMsg     string
+	useProxy     bool
+	proxyError   bool
+}
+
 type Checker struct {
-	db         *sql.DB
-	proxy      *url.URL
-	proxyAlive bool
-	debug      bool
-	siteStates sync.Map
+	db            *sql.DB
+	proxy         *url.URL
+	proxyAlive    bool
+	proxyMu       sync.RWMutex
+	debug         bool
+	siteStates    sync.Map
+	workers       int
+	checkInterval time.Duration
+	taskQueue     chan checkTask
+	resultQueue   chan checkResult
+	wg            sync.WaitGroup
+	stopCh        chan struct{}
 }
 
 type SiteState struct {
@@ -72,15 +95,73 @@ func NewChecker(db *sql.DB) *Checker {
 		}
 	}
 
+	workers := defaultWorkers
+	if workersStr := os.Getenv("CHECKER_WORKERS"); workersStr != "" {
+		if w, err := strconv.Atoi(workersStr); err == nil && w > 0 {
+			workers = w
+		} else {
+			log.Printf("Warning: Invalid CHECKER_WORKERS value: %s, using default %d", workersStr, defaultWorkers)
+		}
+	}
+
+	checkInterval := defaultCheckInterval
+	if debug {
+		checkInterval = debugCheckInterval
+	}
+
+	if intervalStr := os.Getenv("CHECKER_INTERVAL"); intervalStr != "" {
+		if d, err := time.ParseDuration(intervalStr); err == nil && d >= time.Second {
+			checkInterval = d
+		} else {
+			log.Printf("Warning: Invalid CHECKER_INTERVAL value: %s, using %v", intervalStr, checkInterval)
+		}
+	}
+
 	checker := &Checker{
-		db:         db,
-		proxy:      proxyURL,
-		proxyAlive: true,
-		debug:      debug,
+		db:            db,
+		proxy:         proxyURL,
+		proxyAlive:    true,
+		debug:         debug,
+		workers:       workers,
+		checkInterval: checkInterval,
+		taskQueue:     make(chan checkTask, 1000),
+		resultQueue:   make(chan checkResult, 1000),
+		stopCh:        make(chan struct{}),
 	}
 
 	checker.loadInitialStates()
+	checker.validateCapacity()
+
 	return checker
+}
+
+func (c *Checker) validateCapacity() {
+	count, err := c.getSiteCount()
+	if err != nil {
+		log.Printf("Warning: Could not validate checker capacity: %v", err)
+		return
+	}
+
+	maxTasksPerInterval := float64(c.workers) * (c.checkInterval.Seconds() / httpTimeout.Seconds())
+
+	if float64(count) > maxTasksPerInterval {
+		log.Printf("WARNING: Checker capacity may be insufficient!")
+		log.Printf("  Sites to check: %d", count)
+		log.Printf("  Workers: %d", c.workers)
+		log.Printf("  Check interval: %v", c.checkInterval)
+		log.Printf("  HTTP timeout: %v", httpTimeout)
+		log.Printf("  Max sites per interval: %.0f", maxTasksPerInterval)
+		log.Printf("  Consider increasing CHECKER_WORKERS or check interval")
+	} else {
+		c.debugLogf("Capacity OK: %d sites, %d workers, max %.0f sites/interval",
+			count, c.workers, maxTasksPerInterval)
+	}
+}
+
+func (c *Checker) getSiteCount() (int, error) {
+	var count int
+	err := c.db.QueryRow("SELECT COUNT(*) FROM sites").Scan(&count)
+	return count, err
 }
 
 func (c *Checker) loadInitialStates() {
@@ -121,38 +202,229 @@ func (c *Checker) debugLogf(format string, args ...interface{}) {
 }
 
 func (c *Checker) Start() {
-	fmt.Println("Starting checker...")
+	log.Printf("Starting checker with %d workers...", c.workers)
 	if c.debug {
-		c.debugLogf("Checker started with proxy: %v, debug mode: true", c.proxy != nil)
+		c.debugLogf("Debug mode enabled, check interval: %v", c.checkInterval)
 	}
 
-	ticker := time.NewTicker(checkInterval)
-	if c.debug {
-		ticker = time.NewTicker(checkIntervalDebug)
+	for i := 0; i < c.workers; i++ {
+		c.wg.Add(1)
+		go c.worker(i)
 	}
-	for range ticker.C {
-		c.checkAllSites()
+
+	c.wg.Add(1)
+	go c.resultProcessor()
+
+	c.wg.Add(1)
+	go c.scheduler()
+
+	c.wg.Wait()
+}
+
+func (c *Checker) Stop() {
+	close(c.stopCh)
+	c.wg.Wait()
+}
+
+func (c *Checker) scheduler() {
+	defer c.wg.Done()
+
+	c.scheduleTasks()
+
+	ticker := time.NewTicker(c.checkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.stopCh:
+			close(c.taskQueue)
+			return
+		case <-ticker.C:
+			c.scheduleTasks()
+		}
 	}
 }
 
-func isProxyError(err error) bool {
-	if err == nil {
-		return false
+func (c *Checker) scheduleTasks() {
+	sites, err := c.getAllSites()
+	if err != nil {
+		log.Printf("Error getting sites for scheduling: %v", err)
+		return
 	}
-	errStr := strings.ToLower(err.Error())
-	proxyErrors := []string{
-		"cannot connect to proxy",
-		"proxy refused connection",
-		"no route to host",
-		"proxy authentication required",
-		"bad gateway",
-	}
-	for _, proxyErr := range proxyErrors {
-		if strings.Contains(errStr, proxyErr) {
-			return true
+
+	c.debugLogf("Scheduling %d sites for checking", len(sites))
+
+	c.proxyMu.RLock()
+	useProxy := c.proxy != nil && c.proxyAlive
+	c.proxyMu.RUnlock()
+
+	for _, site := range sites {
+		select {
+		case <-c.stopCh:
+			return
+		case c.taskQueue <- checkTask{site: site, useProxy: useProxy}:
+			c.debugLogf("Scheduled site %s (ID: %d)", site.URL, site.ID)
+		default:
+			log.Printf("Warning: Task queue full, skipping site %s (ID: %d)", site.URL, site.ID)
 		}
 	}
-	return false
+}
+
+func (c *Checker) worker(id int) {
+	defer c.wg.Done()
+
+	transport := &http.Transport{
+		TLSHandshakeTimeout: tlsTimeout,
+		DisableKeepAlives:   false,
+		MaxIdleConns:        maxIdleConns,
+		IdleConnTimeout:     idleTimeout,
+	}
+
+	client := &http.Client{
+		Timeout:   httpTimeout,
+		Transport: transport,
+	}
+
+	c.debugLogf("Worker %d started", id)
+
+	for task := range c.taskQueue {
+		c.debugLogf("Worker %d checking site %s (ID: %d)", id, task.site.URL, task.site.ID)
+
+		result := c.checkSite(client, &task.site, task.useProxy)
+		result.userID = task.site.UserID
+		result.siteName = task.site.Name
+
+		select {
+		case c.resultQueue <- result:
+		case <-c.stopCh:
+			return
+		}
+
+		if !result.isUp && result.proxyError && task.useProxy {
+			c.debugLogf("Worker %d retrying site %s without proxy", id, task.site.URL)
+			retryResult := c.checkSite(client, &task.site, false)
+			retryResult.userID = task.site.UserID
+			retryResult.siteName = task.site.Name
+
+			select {
+			case c.resultQueue <- retryResult:
+			case <-c.stopCh:
+				return
+			}
+		}
+	}
+
+	c.debugLogf("Worker %d stopped", id)
+}
+
+func (c *Checker) checkSite(client *http.Client, site *models.Site, useProxy bool) checkResult {
+	result := checkResult{
+		siteID:   site.ID,
+		useProxy: useProxy,
+	}
+
+	if useProxy && c.proxy != nil {
+		client.Transport.(*http.Transport).Proxy = http.ProxyURL(c.proxy)
+	} else {
+		client.Transport.(*http.Transport).Proxy = nil
+	}
+
+	siteURL := site.URL
+	if !hasProtocol(siteURL) {
+		siteURL = "https://" + siteURL
+	}
+
+	start := time.Now()
+
+	ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "HEAD", siteURL, http.NoBody)
+	if err != nil {
+		result.errorMsg = fmt.Sprintf("Error creating request: %v", err)
+		result.responseTime = time.Since(start).Seconds()
+		return result
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := client.Do(req)
+	result.responseTime = time.Since(start).Seconds()
+
+	if err != nil {
+		result.errorMsg = fmt.Sprintf("Error checking site: %v", err)
+		result.proxyError = isProxyError(err)
+		return result
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			c.debugLogf("Error closing response body: %v", cerr)
+		}
+	}()
+
+	result.isUp = resp.StatusCode < serverErrorCode
+	if c.debug {
+		c.debugLogf("Checked site %s (ID: %d): status %d, isUp: %t, responseTime: %.2fs",
+			site.URL, site.ID, resp.StatusCode, result.isUp, result.responseTime)
+	}
+	return result
+}
+
+func (c *Checker) resultProcessor() {
+	defer c.wg.Done()
+	defer close(c.resultQueue)
+
+	proxyFailures := 0
+	proxySuccesses := 0
+	const proxyThreshold = 5
+
+	for {
+		select {
+		case <-c.stopCh:
+			return
+		case result, ok := <-c.resultQueue:
+			if !ok {
+				return
+			}
+
+			c.updateSiteStatus(result.siteID, result.isUp, result.responseTime)
+
+			if !result.isUp && result.errorMsg != "" {
+				c.logError(fmt.Sprintf("site-%d", result.siteID), result.errorMsg)
+			}
+
+			c.checkAndNotifyStatusChange(result.siteID, result.userID, result.siteName, result.isUp)
+
+			if result.useProxy {
+				if result.proxyError {
+					proxyFailures++
+					proxySuccesses = 0
+				} else if result.isUp {
+					proxySuccesses++
+					proxyFailures = 0
+				}
+
+				if proxyFailures >= proxyThreshold {
+					c.proxyMu.Lock()
+					if c.proxyAlive {
+						log.Printf("Proxy appears to be down after %d consecutive failures", proxyFailures)
+						c.proxyAlive = false
+					}
+					c.proxyMu.Unlock()
+					proxyFailures = 0
+				}
+
+				if proxySuccesses >= proxyThreshold {
+					c.proxyMu.Lock()
+					if !c.proxyAlive {
+						log.Printf("Proxy recovered after %d consecutive successes", proxySuccesses)
+						c.proxyAlive = true
+					}
+					c.proxyMu.Unlock()
+					proxySuccesses = 0
+				}
+			}
+		}
+	}
 }
 
 func (c *Checker) checkAndNotifyStatusChange(siteID int, userID *int, siteName string, currentIsUp bool) {
@@ -249,182 +521,6 @@ func (c *Checker) getUserByID(userID int) (*models.User, error) {
 	return &user, nil
 }
 
-func (c *Checker) checkAllSites() {
-	sites, err := c.getAllSites()
-	if err != nil {
-		log.Printf("Error getting sites: %v", err)
-		return
-	}
-
-	c.debugLogf("Starting check of %d sites", len(sites))
-
-	sem := make(chan struct{}, 20)
-	var wg sync.WaitGroup
-
-	if c.proxy != nil {
-		var (
-			proxySuccess   bool
-			allProxyErrors = true
-			mu             sync.Mutex
-		)
-
-		for _, site := range sites {
-			sem <- struct{}{}
-			wg.Add(1)
-
-			go func(s models.Site) {
-				defer func() {
-					<-sem
-					wg.Done()
-				}()
-
-				c.debugLogf("Checking site %s (ID: %d) via proxy", s.URL, s.ID)
-				isUp, responseTime, errorMsg := c.doCheckSite(&s, true)
-
-				mu.Lock()
-				if isUp {
-					c.debugLogf("Site %s is up (proxy), response time: %.2fs", s.URL, responseTime)
-					proxySuccess = true
-					allProxyErrors = false
-				} else {
-					c.debugLogf("Site %s is down (proxy): %s", s.URL, errorMsg)
-					if !isProxyError(errors.New(errorMsg)) {
-						allProxyErrors = false
-					}
-				}
-				mu.Unlock()
-
-				c.updateSiteStatus(s.ID, isUp, responseTime)
-				if !isUp {
-					c.logError(s.URL, errorMsg)
-				}
-				c.checkAndNotifyStatusChange(s.ID, s.UserID, s.Name, isUp)
-			}(site)
-		}
-		wg.Wait()
-
-		c.proxyAlive = proxySuccess || !allProxyErrors
-		if !c.proxyAlive {
-			log.Printf("Proxy appears to be down, retrying with direct connections")
-			c.debugLogf("All sites failed with proxy errors, switching to direct connections")
-
-			for _, site := range sites {
-				sem <- struct{}{}
-				wg.Add(1)
-
-				go func(s models.Site) {
-					defer func() {
-						<-sem
-						wg.Done()
-					}()
-
-					c.debugLogf("Retrying site %s (ID: %d) without proxy", s.URL, s.ID)
-					isUp, responseTime, errorMsg := c.doCheckSite(&s, false)
-
-					if isUp {
-						c.debugLogf("Site %s is up (direct), response time: %.2fs", s.URL, responseTime)
-					} else {
-						c.debugLogf("Site %s is down (direct): %s", s.URL, errorMsg)
-					}
-
-					c.updateSiteStatus(s.ID, isUp, responseTime)
-					if !isUp {
-						c.logError(s.URL, errorMsg)
-					}
-					c.checkAndNotifyStatusChange(s.ID, s.UserID, s.Name, isUp)
-				}(site)
-			}
-			wg.Wait()
-		} else {
-			c.debugLogf("Proxy is working correctly, no need for direct connection retries")
-		}
-		return
-	}
-
-	c.debugLogf("No proxy configured, checking sites directly")
-	for _, site := range sites {
-		sem <- struct{}{}
-		wg.Add(1)
-
-		go func(s models.Site) {
-			defer func() {
-				<-sem
-				wg.Done()
-			}()
-
-			c.debugLogf("Checking site %s (ID: %d) directly", s.URL, s.ID)
-			isUp, responseTime, errorMsg := c.doCheckSite(&s, false)
-
-			if isUp {
-				c.debugLogf("Site %s is up, response time: %.2fs", s.URL, responseTime)
-			} else {
-				c.debugLogf("Site %s is down: %s", s.URL, errorMsg)
-			}
-
-			c.updateSiteStatus(s.ID, isUp, responseTime)
-			if !isUp {
-				c.logError(s.URL, errorMsg)
-			}
-			c.checkAndNotifyStatusChange(s.ID, s.UserID, s.Name, isUp)
-		}(site)
-	}
-	wg.Wait()
-}
-
-func (c *Checker) doCheckSite(site *models.Site, useProxy bool) (isUp bool, responseTime float64, errorMsg string) {
-	transport := &http.Transport{
-		TLSHandshakeTimeout: tlsTimeout,
-		DisableKeepAlives:   false,
-		MaxIdleConns:        maxIdleConns,
-		IdleConnTimeout:     idleTimeout,
-	}
-
-	if useProxy && c.proxy != nil {
-		transport.Proxy = http.ProxyURL(c.proxy)
-	}
-
-	client := &http.Client{
-		Timeout:   httpTimeout,
-		Transport: transport,
-	}
-
-	siteURL := site.URL
-	if !hasProtocol(siteURL) {
-		siteURL = "https://" + siteURL
-	}
-
-	c.debugLogf("Making request to %s (proxy: %v)", siteURL, useProxy)
-	start := time.Now()
-
-	ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "HEAD", siteURL, http.NoBody)
-	if err != nil {
-		errorMsg := fmt.Sprintf("Error creating request: %v", err)
-		c.debugLogf("Request creation failed for %s: %v", siteURL, err)
-		return false, 0, errorMsg
-	}
-	req.Header.Set("User-Agent", userAgent)
-
-	resp, err := client.Do(req)
-	elapsed := time.Since(start).Seconds()
-
-	if err != nil {
-		errorMsg := fmt.Sprintf("Error checking site: %v", err)
-		c.debugLogf("Request failed for %s: %v (took %.2fs)", siteURL, err, elapsed)
-		return false, elapsed, errorMsg
-	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil {
-			c.debugLogf("Error closing response body for %s: %v", siteURL, cerr)
-		}
-	}()
-
-	c.debugLogf("Request to %s completed with status %d (took %.2fs)", siteURL, resp.StatusCode, elapsed)
-	return resp.StatusCode < serverErrorCode, elapsed, ""
-}
-
 func (c *Checker) updateSiteStatus(id int, isUp bool, responseTime float64) {
 	_, err := c.db.Exec("UPDATE sites SET is_up = $1, last_check = $2 WHERE id = $3", isUp, responseTime, id)
 	if err != nil {
@@ -478,4 +574,24 @@ func (c *Checker) getAllSites() ([]models.Site, error) {
 
 func hasProtocol(u string) bool {
 	return len(u) > 8 && (strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://"))
+}
+
+func isProxyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	proxyErrors := []string{
+		"cannot connect to proxy",
+		"proxy refused connection",
+		"no route to host",
+		"proxy authentication required",
+		"bad gateway",
+	}
+	for _, proxyErr := range proxyErrors {
+		if strings.Contains(errStr, proxyErr) {
+			return true
+		}
+	}
+	return false
 }

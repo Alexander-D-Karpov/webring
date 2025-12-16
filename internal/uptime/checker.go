@@ -290,7 +290,7 @@ func (c *Checker) worker(id int) {
 	for task := range c.taskQueue {
 		c.debugLogf("Worker %d checking site %s (ID: %d)", id, task.site.URL, task.site.ID)
 
-		result := c.checkSite(client, &task.site, task.useProxy)
+		result := c.checkSite(client, transport, &task.site, task.useProxy)
 		result.userID = task.site.UserID
 		result.siteName = task.site.Name
 
@@ -302,7 +302,7 @@ func (c *Checker) worker(id int) {
 
 		if !result.isUp && result.proxyError && task.useProxy {
 			c.debugLogf("Worker %d retrying site %s without proxy", id, task.site.URL)
-			retryResult := c.checkSite(client, &task.site, false)
+			retryResult := c.checkSite(client, transport, &task.site, false)
 			retryResult.userID = task.site.UserID
 			retryResult.siteName = task.site.Name
 
@@ -317,16 +317,17 @@ func (c *Checker) worker(id int) {
 	c.debugLogf("Worker %d stopped", id)
 }
 
-func (c *Checker) checkSite(client *http.Client, site *models.Site, useProxy bool) checkResult {
+func (c *Checker) checkSite(client *http.Client,
+	transport *http.Transport, site *models.Site, useProxy bool) checkResult {
 	result := checkResult{
 		siteID:   site.ID,
 		useProxy: useProxy,
 	}
 
 	if useProxy && c.proxy != nil {
-		client.Transport.(*http.Transport).Proxy = http.ProxyURL(c.proxy)
+		transport.Proxy = http.ProxyURL(c.proxy)
 	} else {
-		client.Transport.(*http.Transport).Proxy = nil
+		transport.Proxy = nil
 	}
 
 	siteURL := site.URL

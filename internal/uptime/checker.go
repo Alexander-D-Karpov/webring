@@ -29,11 +29,13 @@ const (
 	logPerm              = 0o644
 	userAgent            = "webring-checker (+https://otor.ing)"
 	defaultWorkers       = 5
+	defaultDownThreshold = 3
 )
 
 type checkTask struct {
-	site     models.Site
-	useProxy bool
+	site      models.Site
+	useProxy  bool
+	currentUp bool
 }
 
 type checkResult struct {
@@ -41,6 +43,7 @@ type checkResult struct {
 	siteName     string
 	userID       *int
 	isUp         bool
+	wasUp        bool
 	responseTime float64
 	errorMsg     string
 	useProxy     bool
@@ -48,22 +51,23 @@ type checkResult struct {
 }
 
 type Checker struct {
-	db            *sql.DB
-	proxy         *url.URL
-	proxyAlive    bool
-	proxyMu       sync.RWMutex
-	debug         bool
-	siteStates    sync.Map
-	workers       int
-	checkInterval time.Duration
-	taskQueue     chan checkTask
-	resultQueue   chan checkResult
-	wg            sync.WaitGroup
-	stopCh        chan struct{}
+	db              *sql.DB
+	proxy           *url.URL
+	proxyAlive      bool
+	proxyMu         sync.RWMutex
+	debug           bool
+	notifyStates    sync.Map
+	failureCounters sync.Map
+	downThreshold   int
+	workers         int
+	checkInterval   time.Duration
+	taskQueue       chan checkTask
+	resultQueue     chan checkResult
+	wg              sync.WaitGroup
+	stopCh          chan struct{}
 }
 
-type SiteState struct {
-	IsUp              bool
+type NotifyState struct {
 	LastNotifiedState bool
 	NotifiedAt        time.Time
 }
@@ -104,6 +108,15 @@ func NewChecker(db *sql.DB) *Checker {
 		}
 	}
 
+	downThreshold := defaultDownThreshold
+	if thresholdStr := os.Getenv("CHECKER_DOWN_THRESHOLD"); thresholdStr != "" {
+		if t, err := strconv.Atoi(thresholdStr); err == nil && t > 0 {
+			downThreshold = t
+		} else {
+			log.Printf("Warning: Invalid CHECKER_DOWN_THRESHOLD value: %s, using default %d", thresholdStr, defaultDownThreshold)
+		}
+	}
+
 	checkInterval := defaultCheckInterval
 	if debug {
 		checkInterval = debugCheckInterval
@@ -122,6 +135,7 @@ func NewChecker(db *sql.DB) *Checker {
 		proxy:         proxyURL,
 		proxyAlive:    true,
 		debug:         debug,
+		downThreshold: downThreshold,
 		workers:       workers,
 		checkInterval: checkInterval,
 		taskQueue:     make(chan checkTask, 1000),
@@ -129,8 +143,10 @@ func NewChecker(db *sql.DB) *Checker {
 		stopCh:        make(chan struct{}),
 	}
 
-	checker.loadInitialStates()
+	checker.loadInitialNotifyStates()
 	checker.validateCapacity()
+
+	log.Printf("Checker initialized with down threshold: %d consecutive failures required", downThreshold)
 
 	return checker
 }
@@ -164,7 +180,7 @@ func (c *Checker) getSiteCount() (int, error) {
 	return count, err
 }
 
-func (c *Checker) loadInitialStates() {
+func (c *Checker) loadInitialNotifyStates() {
 	rows, err := c.db.Query("SELECT id, is_up FROM sites")
 	if err != nil {
 		log.Printf("Error loading initial site states: %v", err)
@@ -183,11 +199,11 @@ func (c *Checker) loadInitialStates() {
 			log.Printf("Error scanning site state: %v", scanErr)
 			continue
 		}
-		c.siteStates.Store(id, &SiteState{
-			IsUp:              isUp,
+		c.notifyStates.Store(id, &NotifyState{
 			LastNotifiedState: isUp,
 			NotifiedAt:        time.Now(),
 		})
+		c.failureCounters.Store(id, 0)
 	}
 
 	if rowsErr := rows.Err(); rowsErr != nil {
@@ -246,7 +262,7 @@ func (c *Checker) scheduler() {
 }
 
 func (c *Checker) scheduleTasks() {
-	sites, err := c.getAllSites()
+	sites, err := c.getAllSitesWithStatus()
 	if err != nil {
 		log.Printf("Error getting sites for scheduling: %v", err)
 		return
@@ -262,8 +278,8 @@ func (c *Checker) scheduleTasks() {
 		select {
 		case <-c.stopCh:
 			return
-		case c.taskQueue <- checkTask{site: site, useProxy: useProxy}:
-			c.debugLogf("Scheduled site %s (ID: %d)", site.URL, site.ID)
+		case c.taskQueue <- checkTask{site: site.Site, useProxy: useProxy, currentUp: site.IsUp}:
+			c.debugLogf("Scheduled site %s (ID: %d, currentUp: %t)", site.URL, site.ID, site.IsUp)
 		default:
 			log.Printf("Warning: Task queue full, skipping site %s (ID: %d)", site.URL, site.ID)
 		}
@@ -288,11 +304,12 @@ func (c *Checker) worker(id int) {
 	c.debugLogf("Worker %d started", id)
 
 	for task := range c.taskQueue {
-		c.debugLogf("Worker %d checking site %s (ID: %d)", id, task.site.URL, task.site.ID)
+		c.debugLogf("Worker %d checking site %s (ID: %d, dbState: %t)", id, task.site.URL, task.site.ID, task.currentUp)
 
 		result := c.checkSite(client, transport, &task.site, task.useProxy)
 		result.userID = task.site.UserID
 		result.siteName = task.site.Name
+		result.wasUp = task.currentUp
 
 		select {
 		case c.resultQueue <- result:
@@ -305,6 +322,7 @@ func (c *Checker) worker(id int) {
 			retryResult := c.checkSite(client, transport, &task.site, false)
 			retryResult.userID = task.site.UserID
 			retryResult.siteName = task.site.Name
+			retryResult.wasUp = task.currentUp
 
 			select {
 			case c.resultQueue <- retryResult:
@@ -363,10 +381,8 @@ func (c *Checker) checkSite(client *http.Client,
 	}()
 
 	result.isUp = resp.StatusCode < serverErrorCode
-	if c.debug {
-		c.debugLogf("Checked site %s (ID: %d): status %d, isUp: %t, responseTime: %.2fs",
-			site.URL, site.ID, resp.StatusCode, result.isUp, result.responseTime)
-	}
+	c.debugLogf("Checked site %s (ID: %d): status %d, isUp: %t, responseTime: %.2fs",
+		site.URL, site.ID, resp.StatusCode, result.isUp, result.responseTime)
 	return result
 }
 
@@ -387,13 +403,19 @@ func (c *Checker) resultProcessor() {
 				return
 			}
 
-			c.updateSiteStatus(result.siteID, result.isUp, result.responseTime)
+			shouldUpdateDB, newIsUp := c.processCheckResult(result)
 
-			if !result.isUp && result.errorMsg != "" {
-				c.logError(fmt.Sprintf("site-%d", result.siteID), result.errorMsg)
+			if shouldUpdateDB {
+				c.updateSiteStatus(result.siteID, newIsUp, result.responseTime)
+
+				if !newIsUp && result.errorMsg != "" {
+					c.logError(fmt.Sprintf("site-%d", result.siteID), result.errorMsg)
+				}
+
+				c.checkAndNotifyStatusChange(result.siteID, result.userID, result.siteName, newIsUp)
+			} else {
+				c.updateSiteResponseTime(result.siteID, result.responseTime)
 			}
-
-			c.checkAndNotifyStatusChange(result.siteID, result.userID, result.siteName, result.isUp)
 
 			if result.useProxy {
 				if result.proxyError {
@@ -428,22 +450,51 @@ func (c *Checker) resultProcessor() {
 	}
 }
 
-func (c *Checker) checkAndNotifyStatusChange(siteID int, userID *int, siteName string, currentIsUp bool) {
-	if userID == nil || *userID == 0 {
-		return
+func (c *Checker) processCheckResult(result checkResult) (shouldUpdateDB bool, newIsUp bool) {
+	dbIsUp := result.wasUp
+
+	if result.isUp {
+		c.failureCounters.Store(result.siteID, 0)
+
+		if !dbIsUp {
+			c.debugLogf("Site %d is UP (check passed), DB says DOWN, updating to UP", result.siteID)
+			return true, true
+		}
+		return false, true
 	}
 
-	stateInterface, exists := c.siteStates.Load(siteID)
+	if !dbIsUp {
+		c.debugLogf("Site %d check failed, DB already says DOWN, just updating response time", result.siteID)
+		return false, false
+	}
+
+	counterInterface, _ := c.failureCounters.LoadOrStore(result.siteID, 0)
+	currentCount, _ := counterInterface.(int)
+	newCount := currentCount + 1
+	c.failureCounters.Store(result.siteID, newCount)
+
+	c.debugLogf("Site %d check failed (DB says UP), failure count: %d/%d", result.siteID, newCount, c.downThreshold)
+
+	if newCount >= c.downThreshold {
+		c.debugLogf("Site %d reached failure threshold (%d), marking as DOWN", result.siteID, c.downThreshold)
+		c.failureCounters.Store(result.siteID, 0)
+		return true, false
+	}
+
+	return false, true
+}
+
+func (c *Checker) checkAndNotifyStatusChange(siteID int, userID *int, siteName string, currentIsUp bool) {
+	stateInterface, exists := c.notifyStates.Load(siteID)
 	if !exists {
-		c.siteStates.Store(siteID, &SiteState{
-			IsUp:              currentIsUp,
+		c.notifyStates.Store(siteID, &NotifyState{
 			LastNotifiedState: currentIsUp,
 			NotifiedAt:        time.Now(),
 		})
 		return
 	}
 
-	state, ok := stateInterface.(*SiteState)
+	state, ok := stateInterface.(*NotifyState)
 	if !ok {
 		log.Printf("Error: invalid state type for site %d", siteID)
 		return
@@ -456,15 +507,16 @@ func (c *Checker) checkAndNotifyStatusChange(siteID int, userID *int, siteName s
 		timeSinceLastNotification := now.Sub(state.NotifiedAt)
 
 		if timeSinceLastNotification >= 30*time.Second {
-			go c.notifyOwner(*userID, siteName, currentIsUp)
+			if userID != nil && *userID != 0 {
+				go c.notifyOwner(*userID, siteName, currentIsUp)
+			}
 
 			state.LastNotifiedState = currentIsUp
 			state.NotifiedAt = now
 		}
 	}
 
-	state.IsUp = currentIsUp
-	c.siteStates.Store(siteID, state)
+	c.notifyStates.Store(siteID, state)
 }
 
 func (c *Checker) notifyOwner(userID int, siteName string, isUp bool) {
@@ -493,9 +545,10 @@ func (c *Checker) notifyOwner(userID int, siteName string, isUp bool) {
 		)
 	} else {
 		message = fmt.Sprintf(
-			"*Site Status: Offline*\n\nYour site *%s* is currently not responding\\. "+
+			"*Site Status: Offline*\n\nYour site *%s* is currently not responding after %d consecutive checks\\. "+
 				"Please check your server\\.",
 			siteNameEscaped,
+			c.downThreshold,
 		)
 	}
 
@@ -529,6 +582,13 @@ func (c *Checker) updateSiteStatus(id int, isUp bool, responseTime float64) {
 	}
 }
 
+func (c *Checker) updateSiteResponseTime(id int, responseTime float64) {
+	_, err := c.db.Exec("UPDATE sites SET last_check = $1 WHERE id = $2", responseTime, id)
+	if err != nil {
+		log.Printf("Error updating site response time: %v", err)
+	}
+}
+
 func (c *Checker) logError(siteURL, errorMsg string) {
 	f, err := os.OpenFile("checker_error.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, logPerm)
 	if err != nil {
@@ -546,8 +606,13 @@ func (c *Checker) logError(siteURL, errorMsg string) {
 	}
 }
 
-func (c *Checker) getAllSites() ([]models.Site, error) {
-	rows, err := c.db.Query("SELECT id, name, url, user_id FROM sites")
+type siteWithStatus struct {
+	models.Site
+	IsUp bool
+}
+
+func (c *Checker) getAllSitesWithStatus() ([]siteWithStatus, error) {
+	rows, err := c.db.Query("SELECT id, name, url, user_id, is_up FROM sites")
 	if err != nil {
 		return nil, err
 	}
@@ -557,10 +622,10 @@ func (c *Checker) getAllSites() ([]models.Site, error) {
 		}
 	}()
 
-	var sites []models.Site
+	var sites []siteWithStatus
 	for rows.Next() {
-		var site models.Site
-		if scanErr := rows.Scan(&site.ID, &site.Name, &site.URL, &site.UserID); scanErr != nil {
+		var site siteWithStatus
+		if scanErr := rows.Scan(&site.ID, &site.Name, &site.URL, &site.UserID, &site.IsUp); scanErr != nil {
 			return nil, scanErr
 		}
 		sites = append(sites, site)

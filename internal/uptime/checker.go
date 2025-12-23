@@ -450,7 +450,7 @@ func (c *Checker) resultProcessor() {
 	}
 }
 
-func (c *Checker) processCheckResult(result checkResult) (shouldUpdateDB bool, newIsUp bool) {
+func (c *Checker) processCheckResult(result checkResult) (shouldUpdateDB, newIsUp bool) {
 	dbIsUp := result.wasUp
 
 	if result.isUp {
@@ -469,7 +469,10 @@ func (c *Checker) processCheckResult(result checkResult) (shouldUpdateDB bool, n
 	}
 
 	counterInterface, _ := c.failureCounters.LoadOrStore(result.siteID, 0)
-	currentCount, _ := counterInterface.(int)
+	currentCount, ok := counterInterface.(int)
+	if !ok {
+		currentCount = 0
+	}
 	newCount := currentCount + 1
 	c.failureCounters.Store(result.siteID, newCount)
 

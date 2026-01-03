@@ -25,7 +25,7 @@ const (
 	tlsTimeout           = 10 * time.Second
 	maxIdleConns         = 100
 	idleTimeout          = 90 * time.Second
-	serverErrorCode      = 500
+	serverErrorCode      = 400
 	logPerm              = 0o644
 	userAgent            = "webring-checker (+https://otor.ing)"
 	defaultWorkers       = 5

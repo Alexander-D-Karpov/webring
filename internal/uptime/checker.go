@@ -25,7 +25,7 @@ const (
 	tlsTimeout           = 10 * time.Second
 	maxIdleConns         = 100
 	idleTimeout          = 90 * time.Second
-	serverErrorCode      = 500
+	serverErrorCode      = 400
 	logPerm              = 0o644
 	userAgent            = "webring-checker (+https://otor.ing)"
 	defaultWorkers       = 5
@@ -358,7 +358,7 @@ func (c *Checker) checkSite(client *http.Client,
 	ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "HEAD", siteURL, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, "GET", siteURL, http.NoBody)
 	if err != nil {
 		result.errorMsg = fmt.Sprintf("Error creating request: %v", err)
 		result.responseTime = time.Since(start).Seconds()

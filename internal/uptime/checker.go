@@ -358,7 +358,7 @@ func (c *Checker) checkSite(client *http.Client,
 	ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "HEAD", siteURL, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, "GET", siteURL, http.NoBody)
 	if err != nil {
 		result.errorMsg = fmt.Sprintf("Error creating request: %v", err)
 		result.responseTime = time.Since(start).Seconds()

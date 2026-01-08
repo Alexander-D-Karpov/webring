@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"html/template"
 	"log"
 	"net/http"
@@ -46,8 +45,7 @@ func InitTemplates(t *template.Template) {
 }
 
 func sanitizeInput(input string) string {
-	trimmed := strings.TrimSpace(input)
-	return html.EscapeString(trimmed)
+	return strings.TrimSpace(input)
 }
 
 func sanitizeURL(input string) string {
@@ -55,7 +53,7 @@ func sanitizeURL(input string) string {
 	if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
 		trimmed = "https://" + trimmed
 	}
-	return html.EscapeString(trimmed)
+	return trimmed
 }
 
 func RegisterHandlers(r *mux.Router, db *sql.DB) {

@@ -381,7 +381,8 @@ func getOrCreateAnonymousAdminUser(db *sql.DB) (int, error) {
 }
 
 func getRespondingSites(db *sql.DB) ([]models.PublicSite, error) {
-	rows, err := db.Query("SELECT slug, name, url, favicon FROM sites WHERE is_up = true ORDER BY display_order")
+	rows, err := db.Query("SELECT slug, name, url, favicon FROM sites " +
+		"WHERE is_up = true AND enabled = true ORDER BY display_order")
 	if err != nil {
 		return nil, err
 	}

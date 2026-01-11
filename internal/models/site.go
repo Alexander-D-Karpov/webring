@@ -6,6 +6,7 @@ type Site struct {
 	Name             string  `json:"name"`
 	URL              string  `json:"url"`
 	IsUp             bool    `json:"is_up"`
+	Enabled          bool    `json:"enabled"`
 	LastCheck        float64 `json:"last_check"`
 	Favicon          *string `json:"favicon"`
 	UserID           *int    `json:"user_id"`

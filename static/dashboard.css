@@ -1528,3 +1528,8 @@ input[type=url] {
         font-size: 0.8125rem;
     }
 }
+
+.col-enabled {
+    width: 5rem;
+    text-align: center;
+}

@@ -130,7 +130,8 @@ func currentSiteRedirectHandler(db *sql.DB) http.HandlerFunc {
 
 		var url string
 		var isUp bool
-		err := db.QueryRow("SELECT url, is_up FROM sites WHERE slug = $1", slug).Scan(&url, &isUp)
+		var enabled bool
+		err := db.QueryRow("SELECT url, is_up, enabled FROM sites WHERE slug = $1", slug).Scan(&url, &isUp, &enabled)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				http.Error(w, "Site not found", http.StatusNotFound)
@@ -143,6 +144,11 @@ func currentSiteRedirectHandler(db *sql.DB) http.HandlerFunc {
 
 		if !isUp {
 			http.Error(w, "Site is currently down", http.StatusServiceUnavailable)
+			return
+		}
+
+		if !enabled {
+			http.Error(w, "Site is currently disabled", http.StatusServiceUnavailable)
 			return
 		}
 
@@ -218,18 +224,18 @@ func getNextSite(db *sql.DB, currentSlug string) (*models.PublicSite, error) {
             SELECT COALESCE(
                 (SELECT MIN(s2.display_order)
                  FROM sites s2
-                 WHERE s2.is_up = TRUE
+                 WHERE s2.is_up = TRUE AND s2.enabled = TRUE
                    AND s2.display_order > c.corder),
                 (SELECT MIN(s3.display_order)
                  FROM sites s3
-                 WHERE s3.is_up = TRUE)
+                 WHERE s3.is_up = TRUE AND s3.enabled = TRUE)
             ) AS next_order
             FROM c
         )
         SELECT s.slug, s.name, s.url, s.favicon
         FROM pick
         LEFT JOIN sites s ON s.display_order = pick.next_order
-        WHERE s.is_up = TRUE
+        WHERE s.is_up = TRUE AND s.enabled = TRUE
     `
 
 	var site models.PublicSite
@@ -254,18 +260,18 @@ func getPreviousSite(db *sql.DB, currentSlug string) (*models.PublicSite, error)
             SELECT COALESCE(
                 (SELECT MAX(s2.display_order)
                  FROM sites s2
-                 WHERE s2.is_up = TRUE
+                 WHERE s2.is_up = TRUE AND s2.enabled = TRUE
                    AND s2.display_order < c.corder),
                 (SELECT MAX(s3.display_order)
                  FROM sites s3
-                 WHERE s3.is_up = TRUE)
+                 WHERE s3.is_up = TRUE AND s3.enabled = TRUE)
             ) AS prev_order
             FROM c
         )
         SELECT s.slug, s.name, s.url, s.favicon
         FROM pick
         LEFT JOIN sites s ON s.display_order = pick.prev_order
-        WHERE s.is_up = TRUE
+        WHERE s.is_up = TRUE AND s.enabled = TRUE
     `
 	var site models.PublicSite
 	err := db.QueryRow(query, currentSlug).Scan(&site.Slug, &site.Name, &site.URL, &site.Favicon)
@@ -281,7 +287,7 @@ func getPreviousSite(db *sql.DB, currentSlug string) (*models.PublicSite, error)
 func getSiteData(db *sql.DB, slug string) (*models.SiteData, error) {
 	query := `
         WITH current_site AS (
-            SELECT slug, name, url, favicon, is_up, display_order
+            SELECT slug, name, url, favicon, is_up, enabled, display_order
             FROM sites
             WHERE slug = $1
         ),
@@ -292,24 +298,25 @@ func getSiteData(db *sql.DB, slug string) (*models.SiteData, error) {
                 c.url         AS curr_url,
                 c.favicon     AS curr_favicon,
                 c.is_up       AS curr_is_up,
+                c.enabled     AS curr_enabled,
                 c.display_order AS curr_order,
 
                 COALESCE(
                     (SELECT MAX(s2.display_order)
                      FROM sites s2
-                     WHERE s2.is_up = TRUE AND s2.display_order < c.display_order),
+                     WHERE s2.is_up = TRUE AND s2.enabled = TRUE AND s2.display_order < c.display_order),
                     (SELECT MAX(s2.display_order)
                      FROM sites s2
-                     WHERE s2.is_up = TRUE)
+                     WHERE s2.is_up = TRUE AND s2.enabled = TRUE)
                 ) AS final_prev_order,
 
                 COALESCE(
                     (SELECT MIN(s2.display_order)
                      FROM sites s2
-                     WHERE s2.is_up = TRUE AND s2.display_order > c.display_order),
+                     WHERE s2.is_up = TRUE AND s2.enabled = TRUE AND s2.display_order > c.display_order),
                     (SELECT MIN(s2.display_order)
                      FROM sites s2
-                     WHERE s2.is_up = TRUE)
+                     WHERE s2.is_up = TRUE AND s2.enabled = TRUE)
                 ) AS final_next_order
             FROM current_site c
         )
@@ -330,8 +337,10 @@ func getSiteData(db *sql.DB, slug string) (*models.SiteData, error) {
           COALESCE(nexts.favicon, '') AS next_favicon
 
         FROM ring
-        LEFT JOIN sites prevs ON prevs.display_order = ring.final_prev_order AND prevs.is_up = TRUE
-        LEFT JOIN sites nexts ON nexts.display_order = ring.final_next_order AND nexts.is_up = TRUE
+        LEFT JOIN sites prevs 
+            ON prevs.display_order = ring.final_prev_order AND prevs.is_up = TRUE AND prevs.enabled = TRUE
+        LEFT JOIN sites nexts 
+            ON nexts.display_order = ring.final_next_order AND nexts.is_up = TRUE AND nexts.enabled = TRUE
     `
 
 	var data models.SiteData
@@ -352,7 +361,7 @@ func getRandomSite(db *sql.DB, currentSlug string) (*models.PublicSite, error) {
 	err := db.QueryRow(`
         SELECT slug, name, url, favicon
         FROM sites
-        WHERE is_up = true AND slug != $1
+        WHERE is_up = true AND enabled = true AND slug != $1
         ORDER BY RANDOM()
         LIMIT 1
     `, currentSlug).Scan(&site.Slug, &site.Name, &site.URL, &site.Favicon)
@@ -362,7 +371,7 @@ func getRandomSite(db *sql.DB, currentSlug string) (*models.PublicSite, error) {
 			err = db.QueryRow(`
                 SELECT slug, name, url, favicon
                 FROM sites
-                WHERE is_up = true
+                WHERE is_up = true AND enabled = true
                 ORDER BY RANDOM()
                 LIMIT 1
             `).Scan(&site.Slug, &site.Name, &site.URL, &site.Favicon)
@@ -381,7 +390,8 @@ func getRandomSite(db *sql.DB, currentSlug string) (*models.PublicSite, error) {
 }
 
 func getRespondingSites(db *sql.DB) ([]models.PublicSite, error) {
-	rows, err := db.Query("SELECT slug, name, url, favicon FROM sites WHERE is_up = true ORDER BY display_order")
+	rows, err := db.Query("SELECT slug, name, url, favicon FROM sites " +
+		"WHERE is_up = true AND enabled = true ORDER BY display_order")
 	if err != nil {
 		return nil, err
 	}

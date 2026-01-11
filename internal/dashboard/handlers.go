@@ -77,6 +77,7 @@ func RegisterHandlers(r *mux.Router, db *sql.DB) {
 	adminRouter.HandleFunc("/update/{id}", updateSiteHandler(db)).Methods("POST")
 	adminRouter.HandleFunc("/reorder/{id}/{direction}", reorderSiteHandler(db)).Methods("POST")
 	adminRouter.HandleFunc("/move/{id}/{position}", moveSiteHandler(db)).Methods("POST")
+	adminRouter.HandleFunc("/toggle-enabled/{id}", toggleEnabledHandler(db)).Methods("POST")
 }
 
 func renderTemplate(w http.ResponseWriter, name string, data interface{}) error {
@@ -172,8 +173,9 @@ func addSiteHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}
 
-		_, err = db.Exec("INSERT INTO sites (id, slug, name, url, display_order, user_id) VALUES ($1, $2, $3, $4, $5, $6)",
-			id, slug, name, url, maxDisplayOrder+1, userID)
+		_, err = db.Exec("INSERT INTO sites (id, slug, name, url, display_order, user_id, enabled) "+
+			"VALUES ($1, $2, $3, $4, $5, $6, $7)",
+			id, slug, name, url, maxDisplayOrder+1, userID, true)
 		if err != nil {
 			var pqErr *pq.Error
 			if errors.As(err, &pqErr) && pqErr.Code.Name() == uniqueViolation {
@@ -301,6 +303,21 @@ func updateSiteHandler(db *sql.DB) http.HandlerFunc {
 				log.Printf("Error updating favicon for site %d: %v", siteID, faviconErr)
 			}
 		}()
+
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	}
+}
+
+func toggleEnabledHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := mux.Vars(r)["id"]
+
+		_, err := db.Exec("UPDATE sites SET enabled = NOT enabled WHERE id = $1", id)
+		if err != nil {
+			log.Printf("Error toggling site enabled status: %v", err)
+			http.Error(w, "Error toggling site status", http.StatusInternalServerError)
+			return
+		}
 
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 	}
@@ -528,7 +545,7 @@ func moveSiteHandler(db *sql.DB) http.HandlerFunc {
 func getAllSites(db *sql.DB) ([]models.Site, error) {
 	rows, err := db.QueryContext(
 		context.Background(), `
-		SELECT s.id, s.slug, s.name, s.url, s.is_up, s.last_check, s.favicon, s.user_id, u.telegram_username
+		SELECT s.id, s.slug, s.name, s.url, s.is_up, s.enabled, s.last_check, s.favicon, s.user_id, u.telegram_username
 		FROM sites s 
 		LEFT JOIN users u ON s.user_id = u.id 
 		ORDER BY s.display_order
@@ -547,7 +564,7 @@ func getAllSites(db *sql.DB) ([]models.Site, error) {
 		var site models.Site
 		var telegramUsername sql.NullString
 		scanErr := rows.Scan(&site.ID, &site.Slug, &site.Name, &site.URL, &site.IsUp,
-			&site.LastCheck, &site.Favicon, &site.UserID, &telegramUsername)
+			&site.Enabled, &site.LastCheck, &site.Favicon, &site.UserID, &telegramUsername)
 		if scanErr != nil {
 			return nil, scanErr
 		}

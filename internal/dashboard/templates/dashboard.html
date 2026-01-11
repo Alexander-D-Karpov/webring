@@ -69,6 +69,7 @@
                 <th class="col-url">URL</th>
                 <th class="col-telegram">TELEGRAM</th>
                 <th class="col-status">STATUS</th>
+                <th class="col-enabled">ENABLED</th>
                 <th class="col-ping">PING</th>
                 <th class="col-actions">ACTIONS</th>
             </tr>
@@ -96,6 +97,7 @@
                 <td>
                     <span class="status-badge new">New</span>
                 </td>
+                <td></td>
                 <td></td>
                 <td>
                     <div class="actions">
@@ -168,6 +170,18 @@
                     {{else}}
                     <span class="status-badge down">DOWN</span>
                     {{end}}
+                </td>
+                <td>
+                    <form action="/admin/toggle-enabled/{{.ID}}" method="POST" style="display: inline;">
+                        {{csrfField $.Request}}
+                        <button type="submit" class="btn btn-sm {{if .Enabled}}btn-success{{else}}btn-warning{{end}}" title="{{if .Enabled}}Click to disable{{else}}Click to enable{{end}}">
+                            {{if .Enabled}}
+                            <i class="ri-check-line"></i>
+                            {{else}}
+                            <i class="ri-close-line"></i>
+                            {{end}}
+                        </button>
+                    </form>
                 </td>
                 <td class="ping-cell">
                     {{if .LastCheck}}

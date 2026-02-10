@@ -1,0 +1,6 @@
+*Request Approved*
+
+*Admin:* {{.AdminName}}
+*Action:* Approved site creation
+*User:* {{.UserName}}
+*Site:* {{.SiteName}}

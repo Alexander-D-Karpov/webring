@@ -1,0 +1,6 @@
+*Request Declined*
+
+*Admin:* {{.AdminName}}
+*Action:* Declined site creation
+*User:* {{.UserName}}
+*Site:* {{.SiteName}}

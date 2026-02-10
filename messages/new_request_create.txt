@@ -1,0 +1,8 @@
+*New Site Submission Request*
+
+*User:* {{.UserName}}
+*Slug:* `{{.Slug}}`
+*Site Name:* {{.SiteName}}
+*URL:* {{.URL}}
+
+*Submitted:* {{.Date}}

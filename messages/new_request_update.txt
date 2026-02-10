@@ -1,0 +1,11 @@
+*Site Update Request*
+
+*User:* {{.UserName}}
+*Site:* {{.SiteName}} (`{{.SiteSlug}}`)
+
+*Changes:*
+{{- range .Changes}}
+  • *{{.Key}}:* {{.Value}}
+{{- end}}
+
+*Submitted:* {{.Date}}

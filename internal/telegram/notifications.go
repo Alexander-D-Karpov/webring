@@ -11,7 +11,6 @@ import (
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"webring/internal/models"
@@ -30,10 +29,10 @@ type Response struct {
 	Description string `json:"description"`
 }
 
-var markdownV2Escape = regexp.MustCompile(`([_*\[\]()~` + "`" + `>#+\-=|{}.!\\])`)
+var markdownV2EscapeRe = regexp.MustCompile(`([_*\[\]()~` + "`" + `>#+\-=|{}.!\\])`)
 
-func escapeMarkdownV2(text string) string {
-	return markdownV2Escape.ReplaceAllString(text, `\$1`)
+func EscapeMarkdownV2(text string) string {
+	return markdownV2EscapeRe.ReplaceAllString(text, `\$1`)
 }
 
 func isDebugMode() bool {
@@ -45,11 +44,25 @@ func isDebugMode() bool {
 	return false
 }
 
-func getEnvOrDefault(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
+func resolveUserName(user *models.User) string {
+	if user.FirstName != nil && *user.FirstName != "" {
+		name := *user.FirstName
+		if user.LastName != nil && *user.LastName != "" {
+			name += " " + *user.LastName
+		}
+		return name
 	}
-	return defaultValue
+	if user.TelegramUsername != nil && *user.TelegramUsername != "" {
+		return "@" + *user.TelegramUsername
+	}
+	return "Unknown User"
+}
+
+func fieldStr(fields map[string]interface{}, key string) string {
+	if v, ok := fields[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 func NotifyAdminsOfNewRequest(db *sql.DB, request *models.UpdateRequest, user *models.User) {
@@ -82,11 +95,8 @@ func NotifyAdminsOfNewRequest(db *sql.DB, request *models.UpdateRequest, user *m
 }
 
 func getAdminTelegramIDs(db *sql.DB) ([]int64, error) {
-	rows, err := db.QueryContext(
-		context.Background(), `
-		SELECT telegram_id 
-		FROM users 
-		WHERE is_admin = true AND telegram_id IS NOT NULL
+	rows, err := db.QueryContext(context.Background(), `
+		SELECT telegram_id FROM users WHERE is_admin = true AND telegram_id IS NOT NULL
 	`)
 	if err != nil {
 		return nil, err
@@ -114,61 +124,37 @@ func getAdminTelegramIDs(db *sql.DB) ([]int64, error) {
 }
 
 func formatRequestMessage(request *models.UpdateRequest, user *models.User) string {
-	var message string
-
-	userName := "Unknown User"
-	if user.FirstName != nil && *user.FirstName != "" {
-		userName = *user.FirstName
-		if user.LastName != nil && *user.LastName != "" {
-			userName += " " + *user.LastName
-		}
-	} else if user.TelegramUsername != nil && *user.TelegramUsername != "" {
-		userName = "@" + *user.TelegramUsername
-	}
-	userName = escapeMarkdownV2(userName)
+	userName := resolveUserName(user)
+	date := request.CreatedAt.Format("15:04 02.01.2006")
 
 	switch request.RequestType {
 	case "create":
-		message = "*New Site Submission Request*\n\n"
-		message += fmt.Sprintf("*User:* %s\n", userName)
-
-		if slug, ok := request.ChangedFields["slug"].(string); ok {
-			message += fmt.Sprintf("*Slug:* `%s`\n", escapeMarkdownV2(slug))
-		}
-		if name, ok := request.ChangedFields["name"].(string); ok {
-			message += fmt.Sprintf("*Site Name:* %s\n", escapeMarkdownV2(name))
-		}
-		if url, ok := request.ChangedFields["url"].(string); ok {
-			message += fmt.Sprintf("*URL:* %s\n", escapeMarkdownV2(url))
-		}
-
+		return RenderMessage("new_request_create", map[string]interface{}{
+			"UserName": userName,
+			"Slug":     fieldStr(request.ChangedFields, "slug"),
+			"SiteName": fieldStr(request.ChangedFields, "name"),
+			"URL":      fieldStr(request.ChangedFields, "url"),
+			"Date":     date,
+		})
 	case "update":
-		message = "*Site Update Request*\n\n"
-		message += fmt.Sprintf("*User:* %s\n", userName)
-
+		siteName, siteSlug := "", ""
 		if request.Site != nil {
-			siteName := escapeMarkdownV2(request.Site.Name)
-			siteSlug := escapeMarkdownV2(request.Site.Slug)
-			message += fmt.Sprintf("*Site:* %s \\(`%s`\\)\n", siteName, siteSlug)
+			siteName = request.Site.Name
+			siteSlug = request.Site.Slug
 		}
-
-		message += "*Changes:*\n"
-		for field, value := range request.ChangedFields {
-			fieldEsc := escapeMarkdownV2(field)
-			valueStr := fmt.Sprintf("%v", value)
-			valueEsc := escapeMarkdownV2(valueStr)
-			message += fmt.Sprintf("  • *%s:* %s\n", fieldEsc, valueEsc)
-		}
+		return RenderMessage("new_request_update", map[string]interface{}{
+			"UserName": userName,
+			"SiteName": siteName,
+			"SiteSlug": siteSlug,
+			"Changes":  BuildChanges(request.ChangedFields),
+			"Date":     date,
+		})
 	}
-
-	dateStr := request.CreatedAt.Format("15:04 02\\.01\\.2006")
-	message += fmt.Sprintf("\n*Submitted:* %s", dateStr)
-
-	return message
+	return ""
 }
 
 func SendMessage(botToken string, chatID int64, text string) {
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
 
 	msg := Message{
 		ChatID:    chatID,
@@ -185,7 +171,7 @@ func SendMessage(botToken string, chatID int64, text string) {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Printf("Error creating Telegram request: %v", err)
 		return
@@ -229,56 +215,17 @@ func NotifyUserOfApprovedRequest(request *models.UpdateRequest, user *models.Use
 	var message string
 	switch request.RequestType {
 	case "create":
-		siteName := "Your site"
-		if name, ok := request.ChangedFields["name"].(string); ok {
-			siteName = name
+		siteName := fieldStr(request.ChangedFields, "name")
+		if siteName == "" {
+			siteName = "Your site"
 		}
-		siteNameEsc := escapeMarkdownV2(siteName)
-
-		template := getEnvOrDefault(
-			"TELEGRAM_MESSAGE_SITE_CREATED",
-			"*Request Approved*\n\n"+
-				"Your site submission has been approved\\!\n\n"+
-				"*Site:* %s\n\nYour site is now part of the webring\\.",
-		)
-
-		if strings.Contains(template, "%s") {
-			message = fmt.Sprintf(template, siteNameEsc)
-		} else {
-			message = template
-		}
-
+		message = RenderMessage("approved_create", map[string]interface{}{
+			"SiteName": siteName,
+		})
 	case "update":
-		template := getEnvOrDefault(
-			"TELEGRAM_MESSAGE_SITE_UPDATED",
-			"*Update Approved*\n\nYour site update request has been approved and the changes have been applied\\.",
-		)
-		message = template
-
-		if len(request.ChangedFields) > 0 {
-			changesTemplate := getEnvOrDefault(
-				"TELEGRAM_MESSAGE_CHANGES_LIST",
-				"\n\n*Applied changes:*\n",
-			)
-			message += changesTemplate
-
-			for field, value := range request.ChangedFields {
-				fieldEsc := escapeMarkdownV2(field)
-				valueStr := fmt.Sprintf("%v", value)
-				valueEsc := escapeMarkdownV2(valueStr)
-
-				itemTemplate := getEnvOrDefault(
-					"TELEGRAM_MESSAGE_CHANGE_ITEM",
-					"• *%s:* %s\n",
-				)
-
-				if strings.Count(itemTemplate, "%s") >= 2 {
-					message += fmt.Sprintf(itemTemplate, fieldEsc, valueEsc)
-				} else {
-					message += itemTemplate
-				}
-			}
-		}
+		message = RenderMessage("approved_update", map[string]interface{}{
+			"Changes": BuildChanges(request.ChangedFields),
+		})
 	}
 
 	SendMessage(botToken, user.TelegramID, message)
@@ -293,44 +240,21 @@ func NotifyUserOfDeclinedRequest(request *models.UpdateRequest, user *models.Use
 	var message string
 	switch request.RequestType {
 	case "create":
-		siteName := "your site"
-		if name, ok := request.ChangedFields["name"].(string); ok {
-			siteName = name
+		siteName := fieldStr(request.ChangedFields, "name")
+		if siteName == "" {
+			siteName = "your site"
 		}
-		siteNameEsc := escapeMarkdownV2(siteName)
-
-		template := getEnvOrDefault(
-			"TELEGRAM_MESSAGE_REQUEST_DECLINED_CREATE",
-			"*Request Declined*\n\n"+
-				"Your site submission request for *%s* has been declined by an administrator\\.\n\n"+
-				"If you have questions, please contact the webring administrator\\.",
-		)
-
-		if strings.Contains(template, "%s") {
-			message = fmt.Sprintf(template, siteNameEsc)
-		} else {
-			message = template
-		}
-
+		message = RenderMessage("declined_create", map[string]interface{}{
+			"SiteName": siteName,
+		})
 	case "update":
 		siteInfo := "your site"
 		if request.Site != nil {
 			siteInfo = request.Site.Name
 		}
-		siteInfoEsc := escapeMarkdownV2(siteInfo)
-
-		template := getEnvOrDefault(
-			"TELEGRAM_MESSAGE_REQUEST_DECLINED_UPDATE",
-			"*Update Request Declined*\n\n"+
-				"Your update request for *%s* has been declined by an administrator\\.\n\n"+
-				"If you have questions, please contact the webring administrator\\.",
-		)
-
-		if strings.Contains(template, "%s") {
-			message = fmt.Sprintf(template, siteInfoEsc)
-		} else {
-			message = template
-		}
+		message = RenderMessage("declined_update", map[string]interface{}{
+			"SiteName": siteInfo,
+		})
 	}
 
 	SendMessage(botToken, user.TelegramID, message)
@@ -339,9 +263,6 @@ func NotifyUserOfDeclinedRequest(request *models.UpdateRequest, user *models.Use
 func NotifyAdminsOfAction(db *sql.DB, action string, request *models.UpdateRequest, performedBy *models.User) {
 	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if botToken == "" {
-		if isDebugMode() {
-			log.Printf("TELEGRAM_BOT_TOKEN not set, skipping admin notification")
-		}
 		return
 	}
 
@@ -352,9 +273,6 @@ func NotifyAdminsOfAction(db *sql.DB, action string, request *models.UpdateReque
 	}
 
 	if len(admins) == 0 {
-		if isDebugMode() {
-			log.Printf("No admins with Telegram IDs found")
-		}
 		return
 	}
 
@@ -369,136 +287,32 @@ func NotifyAdminsOfAction(db *sql.DB, action string, request *models.UpdateReque
 }
 
 func formatAdminActionMessage(action string, request *models.UpdateRequest, performedBy *models.User) string {
-	var message string
-
-	adminName := "Admin"
-	if performedBy.FirstName != nil && *performedBy.FirstName != "" {
-		adminName = *performedBy.FirstName
-		if performedBy.LastName != nil && *performedBy.LastName != "" {
-			adminName += " " + *performedBy.LastName
-		}
-	} else if performedBy.TelegramUsername != nil && *performedBy.TelegramUsername != "" {
-		adminName = "@" + *performedBy.TelegramUsername
-	}
-	adminNameEsc := escapeMarkdownV2(adminName)
+	adminName := resolveUserName(performedBy)
 
 	userName := "Unknown User"
 	if request.User != nil {
-		if request.User.FirstName != nil && *request.User.FirstName != "" {
-			userName = *request.User.FirstName
-			if request.User.LastName != nil && *request.User.LastName != "" {
-				userName += " " + *request.User.LastName
-			}
-		} else if request.User.TelegramUsername != nil && *request.User.TelegramUsername != "" {
-			userName = "@" + *request.User.TelegramUsername
-		}
-	}
-	userNameEsc := escapeMarkdownV2(userName)
-
-	switch action {
-	case "approved":
-		switch request.RequestType {
-		case "create":
-			siteName := "Unknown Site"
-			if name, ok := request.ChangedFields["name"].(string); ok {
-				siteName = name
-			}
-			siteNameEsc := escapeMarkdownV2(siteName)
-
-			template := getEnvOrDefault(
-				"TELEGRAM_MESSAGE_ADMIN_APPROVED_CREATE",
-				"*Request Approved*\n\n*Admin:* %s\n*Action:* Approved site creation\n*User:* %s\n*Site:* %s",
-			)
-
-			if strings.Count(template, "%s") >= 3 {
-				message = fmt.Sprintf(template, adminNameEsc, userNameEsc, siteNameEsc)
-			} else {
-				message = template
-			}
-
-		case "update":
-			siteName := "Unknown Site"
-			if request.Site != nil {
-				siteName = request.Site.Name
-			}
-			siteNameEsc := escapeMarkdownV2(siteName)
-
-			template := getEnvOrDefault(
-				"TELEGRAM_MESSAGE_ADMIN_APPROVED_UPDATE",
-				"*Update Approved*\n\n*Admin:* %s\n*Action:* Approved site update\n*User:* %s\n*Site:* %s",
-			)
-
-			if strings.Count(template, "%s") >= 3 {
-				message = fmt.Sprintf(template, adminNameEsc, userNameEsc, siteNameEsc)
-			} else {
-				message = template
-			}
-
-			if len(request.ChangedFields) > 0 {
-				changesTemplate := getEnvOrDefault(
-					"TELEGRAM_MESSAGE_ADMIN_CHANGES_LIST",
-					"\n\n*Changes:*\n",
-				)
-				message += changesTemplate
-
-				for field, value := range request.ChangedFields {
-					fieldEsc := escapeMarkdownV2(field)
-					valueStr := fmt.Sprintf("%v", value)
-					valueEsc := escapeMarkdownV2(valueStr)
-
-					itemTemplate := getEnvOrDefault(
-						"TELEGRAM_MESSAGE_ADMIN_CHANGE_ITEM",
-						"• *%s:* %s\n",
-					)
-
-					if strings.Count(itemTemplate, "%s") >= 2 {
-						message += fmt.Sprintf(itemTemplate, fieldEsc, valueEsc)
-					} else {
-						message += itemTemplate
-					}
-				}
-			}
-		}
-
-	case "declined":
-		switch request.RequestType {
-		case "create":
-			siteName := "Unknown Site"
-			if name, ok := request.ChangedFields["name"].(string); ok {
-				siteName = name
-			}
-			siteNameEsc := escapeMarkdownV2(siteName)
-
-			template := getEnvOrDefault(
-				"TELEGRAM_MESSAGE_ADMIN_DECLINED_CREATE",
-				"*Request Declined*\n\n*Admin:* %s\n*Action:* Declined site creation\n*User:* %s\n*Site:* %s",
-			)
-
-			if strings.Count(template, "%s") >= 3 {
-				message = fmt.Sprintf(template, adminNameEsc, userNameEsc, siteNameEsc)
-			} else {
-				message = template
-			}
-
-		case "update":
-			siteName := "Unknown Site"
-			if request.Site != nil {
-				siteName = request.Site.Name
-			}
-			siteNameEsc := escapeMarkdownV2(siteName)
-
-			template := getEnvOrDefault(
-				"TELEGRAM_MESSAGE_ADMIN_DECLINED_UPDATE",
-				"*Update Declined*\n\n*Admin:* %s\n*Action:* Declined site update\n*User:* %s\n*Site:* %s",
-			)
-
-			if strings.Count(template, "%s") >= 3 {
-				message = fmt.Sprintf(template, adminNameEsc, userNameEsc, siteNameEsc)
-			} else {
-				message = template
-			}
-		}
+		userName = resolveUserName(request.User)
 	}
 
-	return message
+	siteName := "Unknown Site"
+	if request.RequestType == "create" {
+		if name := fieldStr(request.ChangedFields, "name"); name != "" {
+			siteName = name
+		}
+	} else if request.Site != nil {
+		siteName = request.Site.Name
+	}
+
+	tmplName := fmt.Sprintf("admin_%s_%s", action, request.RequestType)
+	data := map[string]interface{}{
+		"AdminName": adminName,
+		"UserName":  userName,
+		"SiteName":  siteName,
+	}
+
+	if request.RequestType == "update" && action == "approved" {
+		data["Changes"] = BuildChanges(request.ChangedFields)
+	}
+
+	return RenderMessage(tmplName, data)
 }

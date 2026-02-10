@@ -1,0 +1,7 @@
+*Request Approved*
+
+Your site submission has been approved!
+
+*Site:* {{.SiteName}}
+
+Your site is now part of the webring.

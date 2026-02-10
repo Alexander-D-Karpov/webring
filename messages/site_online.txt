@@ -1,0 +1,3 @@
+*Site Status: Online*
+
+Your site *{{.SiteName}}* is now responding and back online.

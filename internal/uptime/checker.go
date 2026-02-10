@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,12 +69,6 @@ type Checker struct {
 type NotifyState struct {
 	LastNotifiedState bool
 	NotifiedAt        time.Time
-}
-
-var markdownV2Escape = regexp.MustCompile(`([_*\[\]()~` + "`" + `>#+\-=|{}.!\\])`)
-
-func escapeMarkdownV2(text string) string {
-	return markdownV2Escape.ReplaceAllString(text, `\$1`)
 }
 
 func NewChecker(db *sql.DB) *Checker {
@@ -538,21 +531,16 @@ func (c *Checker) notifyOwner(userID int, siteName string, isUp bool) {
 		return
 	}
 
-	siteNameEscaped := escapeMarkdownV2(siteName)
-
 	var message string
 	if isUp {
-		message = fmt.Sprintf(
-			"*Site Status: Online*\n\nYour site *%s* is now responding and back online\\.",
-			siteNameEscaped,
-		)
+		message = telegram.RenderMessage("site_online", map[string]interface{}{
+			"SiteName": siteName,
+		})
 	} else {
-		message = fmt.Sprintf(
-			"*Site Status: Offline*\n\nYour site *%s* is currently not responding after %d consecutive checks\\. "+
-				"Please check your server\\.",
-			siteNameEscaped,
-			c.downThreshold,
-		)
+		message = telegram.RenderMessage("site_offline", map[string]interface{}{
+			"SiteName":      siteName,
+			"DownThreshold": c.downThreshold,
+		})
 	}
 
 	telegram.SendMessage(botToken, user.TelegramID, message)

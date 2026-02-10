@@ -21,6 +21,7 @@ import (
 	"webring/internal/dashboard"
 	"webring/internal/database"
 	"webring/internal/public"
+	"webring/internal/telegram"
 	"webring/internal/uptime"
 	"webring/internal/user"
 
@@ -100,6 +101,12 @@ func main() {
 			log.Printf("Failed to close database connection: %v", err)
 		}
 	}()
+
+	messagesDir := os.Getenv("MESSAGES_DIR")
+	if messagesDir == "" {
+		messagesDir = "messages"
+	}
+	telegram.InitTemplates(messagesDir)
 
 	startBackgroundServices(db)
 

@@ -1,0 +1,5 @@
+*Request Declined*
+
+Your site submission request for *{{.SiteName}}* has been declined by an administrator.
+
+If you have questions, please contact the webring administrator.

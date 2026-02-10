@@ -1,0 +1,3 @@
+*Site Status: Offline*
+
+Your site *{{.SiteName}}* is currently not responding after {{.DownThreshold}} consecutive checks. Please check your server.

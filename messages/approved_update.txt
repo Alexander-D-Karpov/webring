@@ -1,0 +1,10 @@
+*Update Approved*
+
+Your site update request has been approved and the changes have been applied.
+{{- if .Changes}}
+
+*Applied changes:*
+{{- range .Changes}}
+  • *{{.Key}}:* {{.Value}}
+{{- end}}
+{{- end}}

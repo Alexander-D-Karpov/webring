@@ -1,0 +1,6 @@
+*Update Declined*
+
+*Admin:* {{.AdminName}}
+*Action:* Declined site update
+*User:* {{.UserName}}
+*Site:* {{.SiteName}}

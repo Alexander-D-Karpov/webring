@@ -30,6 +30,7 @@ WORKDIR /root/
 # Copy the binary from builder stage
 COPY --from=builder /build/webring .
 COPY --from=builder /build/docs ./docs
+COPY --from=builder /build/messages ./messages
 
 # Create media directory
 RUN mkdir -p media

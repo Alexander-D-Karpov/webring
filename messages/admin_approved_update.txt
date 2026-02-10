@@ -1,0 +1,13 @@
+*Update Approved*
+
+*Admin:* {{.AdminName}}
+*Action:* Approved site update
+*User:* {{.UserName}}
+*Site:* {{.SiteName}}
+{{- if .Changes}}
+
+*Changes:*
+{{- range .Changes}}
+  • *{{.Key}}:* {{.Value}}
+{{- end}}
+{{- end}}

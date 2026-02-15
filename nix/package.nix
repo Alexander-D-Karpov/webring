@@ -5,7 +5,7 @@
   src = ../.;
   subPackages = [ "cmd/server" ];
 
-  vendorHash = "sha256-bwCfn3AEWKJmsy8FTkLqtx5VXIjOZ7Nux6wAogeb9JM=";
+  vendorHash = "sha256-l8JA0MKEEngPb5R4r3Xd0MhB8Ah2x1mwREgPmqF1D+I=";
 
   postInstall = ''
     mv $out/bin/server $out/bin/webring-server

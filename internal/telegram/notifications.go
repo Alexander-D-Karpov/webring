@@ -1,13 +1,10 @@
 package telegram
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -17,17 +14,6 @@ import (
 )
 
 const requestTimeout = 10 * time.Second
-
-type Message struct {
-	ChatID    int64  `json:"chat_id"`
-	Text      string `json:"text"`
-	ParseMode string `json:"parse_mode"`
-}
-
-type Response struct {
-	OK          bool   `json:"ok"`
-	Description string `json:"description"`
-}
 
 var markdownV2EscapeRe = regexp.MustCompile(`([_*\[\]()~` + "`" + `>#+\-=|{}.!\\])`)
 
@@ -44,7 +30,39 @@ func isDebugMode() bool {
 	return false
 }
 
-func resolveUserName(user *models.User) string {
+func logDebugf(format string, args ...interface{}) {
+	if isDebugMode() {
+		log.Printf(format, args...)
+	}
+}
+
+// BotToken returns the configured bot token, empty when Telegram is disabled.
+func BotToken() string {
+	return os.Getenv("TELEGRAM_BOT_TOKEN")
+}
+
+// AdminChatID returns the shared admin group chat used for approval polls. Zero means
+// no group is configured and polls are disabled.
+func AdminChatID() int64 {
+	raw := os.Getenv("TELEGRAM_ADMIN_CHAT_ID")
+	if raw == "" {
+		return 0
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		// The value itself is not echoed: it comes straight from the environment and
+		// would land unescaped in the log.
+		log.Println("Invalid TELEGRAM_ADMIN_CHAT_ID: not a chat ID; approval polls are disabled")
+		return 0
+	}
+	return id
+}
+
+// ResolveUserName renders a user's best available display name.
+func ResolveUserName(user *models.User) string {
+	if user == nil {
+		return "Unknown User"
+	}
 	if user.FirstName != nil && *user.FirstName != "" {
 		name := *user.FirstName
 		if user.LastName != nil && *user.LastName != "" {
@@ -65,36 +83,48 @@ func fieldStr(fields map[string]interface{}, key string) string {
 	return ""
 }
 
-func NotifyAdminsOfNewRequest(db *sql.DB, request *models.UpdateRequest, user *models.User) {
-	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if botToken == "" {
-		if isDebugMode() {
-			log.Printf("TELEGRAM_BOT_TOKEN not set, skipping admin notification")
+// RequestSiteName returns the best display name for whatever site a request concerns.
+func RequestSiteName(request *models.UpdateRequest) string {
+	if request == nil {
+		return "Unknown Site"
+	}
+	if request.RequestType == "create" {
+		if name := fieldStr(request.ChangedFields, "name"); name != "" {
+			return name
 		}
+	} else if request.Site != nil && request.Site.Name != "" {
+		return request.Site.Name
+	}
+	return "Unknown Site"
+}
+
+func NotifyAdminsOfNewRequest(db *sql.DB, request *models.UpdateRequest, user *models.User) {
+	botToken := BotToken()
+	if botToken == "" {
+		logDebugf("TELEGRAM_BOT_TOKEN not set, skipping admin notification")
 		return
 	}
 
-	admins, err := getAdminTelegramIDs(db)
+	admins, err := AdminTelegramIDs(db)
 	if err != nil {
 		log.Printf("Error fetching admin Telegram IDs: %v", err)
 		return
 	}
 
 	if len(admins) == 0 {
-		if isDebugMode() {
-			log.Printf("No admins with Telegram IDs found")
-		}
+		logDebugf("No admins with Telegram IDs found")
 		return
 	}
 
-	message := formatRequestMessage(request, user)
+	message := FormatRequestMessage(request, user)
 
 	for _, adminID := range admins {
 		go SendMessage(botToken, adminID, message)
 	}
 }
 
-func getAdminTelegramIDs(db *sql.DB) ([]int64, error) {
+// AdminTelegramIDs lists the Telegram IDs of every admin who can receive messages.
+func AdminTelegramIDs(db *sql.DB) ([]int64, error) {
 	rows, err := db.QueryContext(context.Background(), `
 		SELECT telegram_id FROM users WHERE is_admin = true AND telegram_id IS NOT NULL
 	`)
@@ -123,8 +153,9 @@ func getAdminTelegramIDs(db *sql.DB) ([]int64, error) {
 	return adminIDs, nil
 }
 
-func formatRequestMessage(request *models.UpdateRequest, user *models.User) string {
-	userName := resolveUserName(user)
+// FormatRequestMessage renders the "a new request arrived" text shown to admins.
+func FormatRequestMessage(request *models.UpdateRequest, user *models.User) string {
+	userName := ResolveUserName(user)
 	date := request.CreatedAt.Format("15:04 02.01.2006")
 
 	switch request.RequestType {
@@ -153,62 +184,26 @@ func formatRequestMessage(request *models.UpdateRequest, user *models.User) stri
 	return ""
 }
 
+// SendMessage delivers a MarkdownV2 message, logging rather than returning failures.
+// It is the fire-and-forget path used by the notification helpers.
 func SendMessage(botToken string, chatID int64, text string) {
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
-
-	msg := Message{
-		ChatID:    chatID,
-		Text:      text,
-		ParseMode: "MarkdownV2",
-	}
-
-	jsonData, err := json.Marshal(msg)
-	if err != nil {
-		log.Printf("Error marshaling Telegram message: %v", err)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		log.Printf("Error creating Telegram request: %v", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error sending Telegram message: %v", err)
-		return
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			log.Printf("Error closing response body: %v", closeErr)
-		}
-	}()
-
-	var telegramResp Response
-	if decodeErr := json.NewDecoder(resp.Body).Decode(&telegramResp); decodeErr != nil {
-		log.Printf("Error decoding Telegram response: %v", decodeErr)
+	if _, err := NewClient(botToken).SendMessage(ctx, SendMessageParams{
+		ChatID: chatID,
+		Text:   text,
+	}); err != nil {
+		log.Printf("Error sending Telegram message to %d: %v", chatID, err)
 		return
 	}
 
-	if !telegramResp.OK {
-		log.Printf("Telegram API error: %s", telegramResp.Description)
-		return
-	}
-
-	if isDebugMode() {
-		log.Printf("Successfully sent Telegram notification to user %d", chatID)
-	}
+	logDebugf("Successfully sent Telegram notification to user %d", chatID)
 }
 
 func NotifyUserOfApprovedRequest(request *models.UpdateRequest, user *models.User) {
-	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if botToken == "" || user.TelegramID == 0 {
+	botToken := BotToken()
+	if botToken == "" || user == nil || user.TelegramID == 0 {
 		return
 	}
 
@@ -232,8 +227,8 @@ func NotifyUserOfApprovedRequest(request *models.UpdateRequest, user *models.Use
 }
 
 func NotifyUserOfDeclinedRequest(request *models.UpdateRequest, user *models.User) {
-	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if botToken == "" || user.TelegramID == 0 {
+	botToken := BotToken()
+	if botToken == "" || user == nil || user.TelegramID == 0 {
 		return
 	}
 
@@ -261,25 +256,27 @@ func NotifyUserOfDeclinedRequest(request *models.UpdateRequest, user *models.Use
 }
 
 func NotifyAdminsOfAction(db *sql.DB, action string, request *models.UpdateRequest, performedBy *models.User) {
-	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	botToken := BotToken()
 	if botToken == "" {
 		return
 	}
 
-	admins, err := getAdminTelegramIDs(db)
+	admins, err := AdminTelegramIDs(db)
 	if err != nil {
 		log.Printf("Error fetching admin Telegram IDs: %v", err)
 		return
 	}
 
-	if len(admins) == 0 {
-		return
-	}
-
 	message := formatAdminActionMessage(action, request, performedBy)
 
+	// The group chat carries the poll, so a decision taken in the dashboard has to be
+	// echoed there too — otherwise the closed poll is the only trace of what happened.
+	if chatID := AdminChatID(); chatID != 0 {
+		go SendMessage(botToken, chatID, message)
+	}
+
 	for _, adminID := range admins {
-		if adminID == performedBy.TelegramID {
+		if performedBy != nil && adminID == performedBy.TelegramID {
 			continue
 		}
 		go SendMessage(botToken, adminID, message)
@@ -287,27 +284,18 @@ func NotifyAdminsOfAction(db *sql.DB, action string, request *models.UpdateReque
 }
 
 func formatAdminActionMessage(action string, request *models.UpdateRequest, performedBy *models.User) string {
-	adminName := resolveUserName(performedBy)
+	adminName := ResolveUserName(performedBy)
 
 	userName := "Unknown User"
 	if request.User != nil {
-		userName = resolveUserName(request.User)
-	}
-
-	siteName := "Unknown Site"
-	if request.RequestType == "create" {
-		if name := fieldStr(request.ChangedFields, "name"); name != "" {
-			siteName = name
-		}
-	} else if request.Site != nil {
-		siteName = request.Site.Name
+		userName = ResolveUserName(request.User)
 	}
 
 	tmplName := fmt.Sprintf("admin_%s_%s", action, request.RequestType)
 	data := map[string]interface{}{
 		"AdminName": adminName,
 		"UserName":  userName,
-		"SiteName":  siteName,
+		"SiteName":  RequestSiteName(request),
 	}
 
 	if request.RequestType == "update" && action == "approved" {

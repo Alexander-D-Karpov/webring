@@ -85,6 +85,16 @@ var templateSchema = map[string]map[string]interface{}{
 		"SiteName":      "test",
 		"DownThreshold": 3,
 	},
+	"poll_approved": {
+		"SiteName": "test",
+		"UserName": "test",
+		"Voters":   []string{"test"},
+	},
+	"poll_declined": {
+		"SiteName": "test",
+		"UserName": "test",
+		"Voters":   []string{"test"},
+	},
 }
 
 var staticEscaper = regexp.MustCompile(`([_\[\]()~>#+\-=|{}.!\\])`)
@@ -128,6 +138,8 @@ var defaults = map[string]string{
 	"admin_declined_update": "*Update Declined*\n\n*Admin:* {{.AdminName}}\n*Action:* Declined site update\n*User:* {{.UserName}}\n*Site:* {{.SiteName}}",
 	"site_online":           "*Site Status: Online*\n\nYour site *{{.SiteName}}* is now responding and back online.",
 	"site_offline":          "*Site Status: Offline*\n\nYour site *{{.SiteName}}* is currently not responding after {{.DownThreshold}} consecutive checks. Please check your server.",
+	"poll_approved":         "*Request Approved by Vote*\n\n*Site:* {{.SiteName}}\n*User:* {{.UserName}}\n{{- if .Voters}}\n\n*Approved by:*\n{{- range .Voters}}\n  • {{.}}\n{{- end}}\n{{- end}}",
+	"poll_declined":         "*Request Declined by Vote*\n\n*Site:* {{.SiteName}}\n*User:* {{.UserName}}\n{{- if .Voters}}\n\n*Declined by:*\n{{- range .Voters}}\n  • {{.}}\n{{- end}}\n{{- end}}",
 }
 
 func mustParseFallback(name, fallback string) *template.Template {
@@ -219,6 +231,12 @@ func autoEscapeData(
 		switch val := v.(type) {
 		case string:
 			result[k] = EscapeMarkdownV2(val)
+		case []string:
+			escaped := make([]string, len(val))
+			for i, s := range val {
+				escaped[i] = EscapeMarkdownV2(s)
+			}
+			result[k] = escaped
 		case []ChangeEntry:
 			escaped := make([]ChangeEntry, len(val))
 			for i, e := range val {

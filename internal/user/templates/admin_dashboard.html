@@ -120,6 +120,56 @@
                         {{end}}
                     </div>
                 </div>
+
+                {{$votes := index $.Votes .ID}}
+                {{if $votes}}
+                <div class="request-votes">
+                    <div class="votes-label">
+                        <span>Admin Vote</span>
+                        {{if $votes.Open}}
+                        <span class="votes-progress">{{$votes.Leading}} / {{$votes.Threshold}}</span>
+                        {{else}}
+                        <span class="votes-progress closed">Closed</span>
+                        {{end}}
+                    </div>
+
+                    <div class="votes-list">
+                        <div class="vote-group">
+                            <span class="vote-tally approve">
+                                <i class="ri-check-line"></i>
+                                {{len $votes.Approve}}
+                            </span>
+                            {{if $votes.Approve}}
+                            <span class="vote-voters">
+                                {{range $i, $v := $votes.Approve}}{{if $i}}, {{end}}{{$v.Name}}{{if $v.Username}} <span class="vote-handle">@{{$v.Username}}</span>{{end}}{{end}}
+                            </span>
+                            {{else}}
+                            <span class="vote-voters empty">no votes</span>
+                            {{end}}
+                        </div>
+
+                        <div class="vote-group">
+                            <span class="vote-tally decline">
+                                <i class="ri-close-line"></i>
+                                {{len $votes.Decline}}
+                            </span>
+                            {{if $votes.Decline}}
+                            <span class="vote-voters">
+                                {{range $i, $v := $votes.Decline}}{{if $i}}, {{end}}{{$v.Name}}{{if $v.Username}} <span class="vote-handle">@{{$v.Username}}</span>{{end}}{{end}}
+                            </span>
+                            {{else}}
+                            <span class="vote-voters empty">no votes</span>
+                            {{end}}
+                        </div>
+                    </div>
+
+                    {{if $votes.Open}}
+                    <div class="votes-hint">
+                        {{$votes.Remaining}} more vote{{if ne $votes.Remaining 1}}s{{end}} for one option decides this request.
+                    </div>
+                    {{end}}
+                </div>
+                {{end}}
             </div>
 
             <div class="request-actions">

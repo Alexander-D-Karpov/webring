@@ -3,37 +3,44 @@ package user
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 
-	"webring/internal/telegram"
-
-	"webring/internal/favicon"
+	"webring/internal/approval"
 	"webring/internal/models"
+	"webring/internal/requests"
+	"webring/internal/telegram"
 
 	"github.com/gorilla/mux"
 )
 
 func adminDashboardHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		requests, err := getAllRequests(db)
+		list, err := getAllRequests(db)
 		if err != nil {
 			log.Printf("Error fetching requests: %v", err)
 			http.Error(w, "Error fetching requests", http.StatusInternalServerError)
 			return
 		}
 
+		requestIDs := make([]int, 0, len(list))
+		for _, req := range list {
+			requestIDs = append(requestIDs, req.ID)
+		}
+
 		user := GetUserFromContext(r.Context())
 		data := struct {
 			User     *models.User
 			Requests []models.UpdateRequest
+			Votes    map[int]*approval.VoteSummary
 			Request  *http.Request
 		}{
 			User:     user,
-			Requests: requests,
+			Requests: list,
+			Votes:    approval.Default().VoteSummaries(r.Context(), requestIDs),
 			Request:  r,
 		}
 
@@ -162,6 +169,43 @@ func moveSiteToPositionHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// loadRequestForDecision fetches a request and takes ownership of deciding it, so that a
+// dashboard click and a winning Telegram vote can never both act on the same request. It
+// writes the HTTP response and returns nil when the caller should stop.
+func loadRequestForDecision(w http.ResponseWriter, r *http.Request, db *sql.DB,
+	requestID int, status approval.Status) (*models.UpdateRequest, *approval.Poll) {
+	req, err := requests.Load(db, requestID)
+	if err != nil {
+		if errors.Is(err, requests.ErrNotFound) {
+			http.Error(w, "Request not found", http.StatusNotFound)
+		} else {
+			log.Printf("Error fetching request: %v", err)
+			http.Error(w, "Error fetching request", http.StatusInternalServerError)
+		}
+		return nil, nil
+	}
+
+	manager := approval.Default()
+
+	// The poll has to be looked up before the request row is removed, because deleting
+	// the request clears the link between them.
+	poll := manager.PollForRequest(r.Context(), requestID)
+
+	claimed, err := manager.Claim(r.Context(), requestID, status)
+	if err != nil {
+		log.Printf("Error claiming request %d: %v", requestID, err)
+		http.Error(w, "Error processing request", http.StatusInternalServerError)
+		return nil, nil
+	}
+	if !claimed {
+		// A Telegram vote already decided this one; the request is gone.
+		http.Redirect(w, r, "/admin/requests", http.StatusSeeOther)
+		return nil, nil
+	}
+
+	return req, poll
+}
+
 func rejectRequestHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := GetUserFromContext(r.Context())
@@ -170,80 +214,29 @@ func rejectRequestHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		requestIDStr := mux.Vars(r)["id"]
-		requestID, err := strconv.Atoi(requestIDStr)
+		requestID, err := strconv.Atoi(mux.Vars(r)["id"])
 		if err != nil {
 			http.Error(w, "Invalid request ID", http.StatusBadRequest)
 			return
 		}
 
-		var req models.UpdateRequest
-		var changedFieldsJSON []byte
-		var userTgID sql.NullInt64
-		var userTgUsername, userFirstName, userLastName sql.NullString
-		var siteSlug, siteName, siteURL sql.NullString
-
-		err = db.QueryRow(`
-			SELECT ur.user_id, ur.site_id, ur.request_type, ur.changed_fields,
-			       u.telegram_id, u.telegram_username, u.first_name, u.last_name,
-			       s.slug, s.name, s.url
-			FROM update_requests ur
-			JOIN users u ON ur.user_id = u.id
-			LEFT JOIN sites s ON ur.site_id = s.id
-			WHERE ur.id = $1
-		`, requestID).Scan(&req.UserID, &req.SiteID, &req.RequestType, &changedFieldsJSON,
-			&userTgID, &userTgUsername, &userFirstName, &userLastName,
-			&siteSlug, &siteName, &siteURL)
-
-		if err != nil {
-			if err == sql.ErrNoRows {
-				http.Error(w, "Request not found", http.StatusNotFound)
-			} else {
-				log.Printf("Error fetching request: %v", err)
-				http.Error(w, "Error fetching request", http.StatusInternalServerError)
-			}
+		req, poll := loadRequestForDecision(w, r, db, requestID, approval.StatusDeclined)
+		if req == nil {
 			return
 		}
 
-		if err = json.Unmarshal(changedFieldsJSON, &req.ChangedFields); err != nil {
-			log.Printf("Error unmarshaling changed fields: %v", err)
-			http.Error(w, "Error processing request", http.StatusInternalServerError)
-			return
-		}
+		manager := approval.Default()
 
-		req.User = &models.User{
-			TelegramID: func() int64 {
-				if userTgID.Valid {
-					return userTgID.Int64
-				}
-				return 0
-			}(),
-			TelegramUsername: &userTgUsername.String,
-			FirstName:        &userFirstName.String,
-			LastName:         &userLastName.String,
-		}
-
-		if req.SiteID != nil {
-			req.Site = &models.Site{
-				Slug: siteSlug.String,
-				Name: siteName.String,
-				URL:  siteURL.String,
-			}
-		}
-
-		if _, err = db.Exec("DELETE FROM update_requests WHERE id = $1", requestID); err != nil {
+		if err = requests.Decline(db, req); err != nil {
 			log.Printf("Error deleting request: %v", err)
+			manager.Release(r.Context(), poll)
 			http.Error(w, "Error rejecting request", http.StatusInternalServerError)
 			return
 		}
 
-		go func() {
-			if userTgID.Valid && userTgID.Int64 != 0 {
-				telegram.NotifyUserOfDeclinedRequest(&req, req.User)
-			}
+		manager.ClosePoll(r.Context(), poll)
 
-			telegram.NotifyAdminsOfAction(db, "declined", &req, user)
-		}()
+		go telegram.NotifyAdminsOfAction(db, "declined", req, user)
 
 		http.Redirect(w, r, "/admin/requests", http.StatusSeeOther)
 	}
@@ -268,7 +261,7 @@ func getAllRequests(db *sql.DB) ([]models.UpdateRequest, error) {
 		}
 	}()
 
-	var requests []models.UpdateRequest
+	var list []models.UpdateRequest
 	for rows.Next() {
 		var req models.UpdateRequest
 		var changedFieldsJSON []byte
@@ -301,14 +294,14 @@ func getAllRequests(db *sql.DB) ([]models.UpdateRequest, error) {
 			}
 		}
 
-		requests = append(requests, req)
+		list = append(list, req)
 	}
 
 	if rowsErr := rows.Err(); rowsErr != nil {
 		return nil, rowsErr
 	}
 
-	return requests, nil
+	return list, nil
 }
 
 func approveRequestHandler(db *sql.DB) http.HandlerFunc {
@@ -319,114 +312,57 @@ func approveRequestHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		requestIDStr := mux.Vars(r)["id"]
-		requestID, err := strconv.Atoi(requestIDStr)
+		requestID, err := strconv.Atoi(mux.Vars(r)["id"])
 		if err != nil {
 			http.Error(w, "Invalid request ID", http.StatusBadRequest)
 			return
 		}
 
-		var req models.UpdateRequest
-		var changedFieldsJSON []byte
-		var userTgID sql.NullInt64
-		var userTgUsername, userFirstName, userLastName sql.NullString
-		var siteSlug, siteName, siteURL sql.NullString
-
-		err = db.QueryRow(`
-			SELECT ur.user_id, ur.site_id, ur.request_type, ur.changed_fields,
-			       u.telegram_id, u.telegram_username, u.first_name, u.last_name,
-			       s.slug, s.name, s.url
-			FROM update_requests ur
-			JOIN users u ON ur.user_id = u.id
-			LEFT JOIN sites s ON ur.site_id = s.id
-			WHERE ur.id = $1
-		`, requestID).Scan(&req.UserID, &req.SiteID, &req.RequestType, &changedFieldsJSON,
-			&userTgID, &userTgUsername, &userFirstName, &userLastName,
-			&siteSlug, &siteName, &siteURL)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				http.Error(w, "Request not found", http.StatusNotFound)
-			} else {
-				log.Printf("Error fetching request: %v", err)
-				http.Error(w, "Error fetching request", http.StatusInternalServerError)
-			}
+		req, poll := loadRequestForDecision(w, r, db, requestID, approval.StatusApproved)
+		if req == nil {
 			return
 		}
 
-		if err = json.Unmarshal(changedFieldsJSON, &req.ChangedFields); err != nil {
-			log.Printf("Error unmarshaling changed fields: %v", err)
-			http.Error(w, "Error processing request", http.StatusInternalServerError)
-			return
-		}
+		manager := approval.Default()
 
-		req.User = &models.User{
-			TelegramID: func() int64 {
-				if userTgID.Valid {
-					return userTgID.Int64
-				}
-				return 0
-			}(),
-			TelegramUsername: &userTgUsername.String,
-			FirstName:        &userFirstName.String,
-			LastName:         &userLastName.String,
-		}
-
-		if req.SiteID != nil {
-			req.Site = &models.Site{
-				Slug: siteSlug.String,
-				Name: siteName.String,
-				URL:  siteURL.String,
-			}
-		}
-
-		var applyErr error
-		if req.RequestType == "create" {
-			applyErr = createSiteFromRequest(db, &req)
-		} else {
-			applyErr = updateSiteFromRequest(db, &req)
-		}
-
-		if applyErr != nil {
+		if applyErr := requests.Approve(db, req); applyErr != nil {
 			log.Printf("Error applying request: %v", applyErr)
-
-			templatesMu.RLock()
-			t := templates
-			templatesMu.RUnlock()
-
-			if t == nil {
-				http.Error(w, fmt.Sprintf("Error applying changes: %v", applyErr), http.StatusInternalServerError)
-				return
-			}
-
-			data := struct {
-				Error   string
-				Request *models.UpdateRequest
-			}{
-				Error:   applyErr.Error(),
-				Request: &req,
-			}
-
-			w.WriteHeader(http.StatusBadRequest)
-			if err = t.ExecuteTemplate(w, "request_error.html", data); err != nil {
-				log.Printf("Error rendering error template: %v", err)
-				http.Error(w, fmt.Sprintf("Error applying changes: %v", applyErr), http.StatusInternalServerError)
-			}
+			// The request is still pending, so hand it back for another attempt.
+			manager.Release(r.Context(), poll)
+			renderRequestError(w, req, applyErr)
 			return
 		}
 
-		if _, err = db.Exec("DELETE FROM update_requests WHERE id = $1", requestID); err != nil {
-			log.Printf("Error deleting request: %v", err)
-		}
+		manager.ClosePoll(r.Context(), poll)
 
-		go func() {
-			if userTgID.Valid && userTgID.Int64 != 0 {
-				telegram.NotifyUserOfApprovedRequest(&req, req.User)
-			}
-
-			telegram.NotifyAdminsOfAction(db, "approved", &req, user)
-		}()
+		go telegram.NotifyAdminsOfAction(db, "approved", req, user)
 
 		http.Redirect(w, r, "/admin/requests", http.StatusSeeOther)
+	}
+}
+
+func renderRequestError(w http.ResponseWriter, req *models.UpdateRequest, cause error) {
+	templatesMu.RLock()
+	t := templates
+	templatesMu.RUnlock()
+
+	if t == nil {
+		http.Error(w, fmt.Sprintf("Error applying changes: %v", cause), http.StatusInternalServerError)
+		return
+	}
+
+	data := struct {
+		Error   string
+		Request *models.UpdateRequest
+	}{
+		Error:   cause.Error(),
+		Request: req,
+	}
+
+	w.WriteHeader(http.StatusBadRequest)
+	if err := t.ExecuteTemplate(w, "request_error.html", data); err != nil {
+		log.Printf("Error rendering error template: %v", err)
+		http.Error(w, fmt.Sprintf("Error applying changes: %v", cause), http.StatusInternalServerError)
 	}
 }
 
@@ -467,127 +403,4 @@ func getAllUsers(db *sql.DB) ([]models.User, error) {
 	}
 
 	return users, nil
-}
-
-func createSiteFromRequest(db *sql.DB, req *models.UpdateRequest) error {
-	slug, slugOk := req.ChangedFields["slug"].(string)
-	name, nameOk := req.ChangedFields["name"].(string)
-	url, urlOk := req.ChangedFields["url"].(string)
-
-	if !slugOk || !nameOk || !urlOk {
-		return fmt.Errorf("missing required fields")
-	}
-
-	var existingID int
-	err := db.QueryRow("SELECT id FROM sites WHERE slug = $1", slug).Scan(&existingID)
-	if err == nil {
-		return fmt.Errorf("slug '%s' is already in use by site ID %d", slug, existingID)
-	}
-	if err != sql.ErrNoRows {
-		return fmt.Errorf("error checking slug availability: %w", err)
-	}
-
-	var nextID int
-	if err = db.QueryRow("SELECT COALESCE(MAX(id), 0) + 1 FROM sites").Scan(&nextID); err != nil {
-		return fmt.Errorf("error getting next ID: %w", err)
-	}
-
-	err = db.QueryRow("SELECT id FROM sites WHERE id = $1", nextID).Scan(&existingID)
-	if err == nil {
-		return fmt.Errorf("ID %d is already in use", nextID)
-	}
-	if err != sql.ErrNoRows {
-		return fmt.Errorf("error checking ID availability: %w", err)
-	}
-
-	var maxDisplayOrder int
-	if err := db.QueryRow("SELECT COALESCE(MAX(display_order), 0) FROM sites").Scan(&maxDisplayOrder); err != nil {
-		return fmt.Errorf("error getting max display order: %w", err)
-	}
-
-	if _, err := db.Exec(`
-		INSERT INTO sites (id, slug, name, url, user_id, display_order)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, nextID, slug, name, url, req.UserID, maxDisplayOrder+1); err != nil {
-		return fmt.Errorf("error inserting site: %w", err)
-	}
-
-	go func() {
-		mediaFolder := os.Getenv("MEDIA_FOLDER")
-		if mediaFolder == "" {
-			mediaFolder = "media"
-		}
-
-		faviconPath, err := favicon.GetAndStoreFavicon(url, mediaFolder, nextID)
-		if err != nil {
-			log.Printf("Error retrieving favicon for %s: %v", url, err)
-			return
-		}
-
-		if _, err = db.Exec("UPDATE sites SET favicon = $1 WHERE id = $2", faviconPath, nextID); err != nil {
-			log.Printf("Error updating favicon for site %d: %v", nextID, err)
-		}
-	}()
-
-	return nil
-}
-
-func updateSiteFromRequest(db *sql.DB, req *models.UpdateRequest) error {
-	if req.SiteID == nil {
-		return fmt.Errorf("site ID is required for update")
-	}
-
-	allowedFields := map[string]bool{
-		"slug": true,
-		"name": true,
-		"url":  true,
-	}
-
-	updates := make(map[string]interface{})
-	for field, value := range req.ChangedFields {
-		if allowedFields[field] {
-			updates[field] = value
-		}
-	}
-
-	if len(updates) == 0 {
-		return nil
-	}
-
-	if slug, ok := updates["slug"]; ok {
-		if _, err := db.Exec("UPDATE sites SET slug = $1 WHERE id = $2", slug, *req.SiteID); err != nil {
-			return fmt.Errorf("error updating slug: %w", err)
-		}
-	}
-	if name, ok := updates["name"]; ok {
-		if _, err := db.Exec("UPDATE sites SET name = $1 WHERE id = $2", name, *req.SiteID); err != nil {
-			return fmt.Errorf("error updating name: %w", err)
-		}
-	}
-	if url, ok := updates["url"]; ok {
-		if _, err := db.Exec("UPDATE sites SET url = $1 WHERE id = $2", url, *req.SiteID); err != nil {
-			return fmt.Errorf("error updating url: %w", err)
-		}
-	}
-
-	if newURL, ok := updates["url"].(string); ok {
-		go func() {
-			mediaFolder := os.Getenv("MEDIA_FOLDER")
-			if mediaFolder == "" {
-				mediaFolder = "media"
-			}
-
-			faviconPath, err := favicon.GetAndStoreFavicon(newURL, mediaFolder, *req.SiteID)
-			if err != nil {
-				log.Printf("Error retrieving favicon for %s: %v", newURL, err)
-				return
-			}
-
-			if _, err = db.Exec("UPDATE sites SET favicon = $1 WHERE id = $2", faviconPath, *req.SiteID); err != nil {
-				log.Printf("Error updating favicon for site %d: %v", *req.SiteID, err)
-			}
-		}()
-	}
-
-	return nil
 }

@@ -1,0 +1,11 @@
+*Request Approved by Vote*
+
+*Site:* {{.SiteName}}
+*User:* {{.UserName}}
+{{- if .Voters}}
+
+*Approved by:*
+{{- range .Voters}}
+  • {{.}}
+{{- end}}
+{{- end}}

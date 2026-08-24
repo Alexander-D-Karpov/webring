@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"errors"
@@ -17,6 +18,7 @@ import (
 
 	"webring"
 	"webring/internal/api"
+	"webring/internal/approval"
 	"webring/internal/auth"
 	"webring/internal/dashboard"
 	"webring/internal/database"
@@ -134,6 +136,24 @@ func startBackgroundServices(db *sql.DB) {
 
 	checker := uptime.NewChecker(db)
 	go checker.Start()
+
+	startApprovalListener(db)
+}
+
+// startApprovalListener wires up Telegram approval polls and begins consuming votes.
+//
+// The Bot API offers no way to read a poll's state, so votes are only visible as
+// poll_answer updates: this listener is the only way the outcome of a poll is ever seen.
+func startApprovalListener(db *sql.DB) {
+	manager := approval.Init(db)
+	if !manager.Enabled() {
+		log.Println("Telegram approval polls disabled " +
+			"(set TELEGRAM_BOT_TOKEN and TELEGRAM_ADMIN_CHAT_ID to enable)")
+		return
+	}
+
+	runner := approval.NewRunner(telegram.NewClient(telegram.BotToken()), manager)
+	go runner.Run(context.Background())
 }
 
 func registerHandlers(r *mux.Router, db *sql.DB) {

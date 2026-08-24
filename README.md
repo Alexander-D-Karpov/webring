@@ -9,6 +9,7 @@ This project is a webring relay service built with Go. It manages a list of webs
 - API endpoints for navigating the webring
 - Telegram authentication and user management
 - Site submission and update request workflow with admin approval
+- Telegram approval polls: admins vote on each request, a majority decides it
 - Telegram notifications for status changes, submissions and approvals
 - Customizable notification messages via template files
 - Basic authentication for the dashboard
@@ -63,6 +64,38 @@ Available templates:
 | `admin_declined_update.txt` | Other admins: site update declined          |
 | `site_online.txt`           | Owner notification: site back online        |
 | `site_offline.txt`          | Owner notification: site went offline       |
+| `poll_approved.txt`         | Request approved by admin vote              |
+| `poll_declined.txt`         | Request declined by admin vote              |
+
+## Telegram Approval Polls
+
+When a request is submitted, the bot can post a poll to a shared admin group chat. Once a
+majority of admins pick the same option the request is applied or discarded, the poll is
+closed, and the list of admins who voted that way is posted to the group and sent to each
+admin.
+
+Set `TELEGRAM_ADMIN_CHAT_ID` to the group's chat ID to enable it. Leaving it empty keeps
+the previous behavior, where requests are decided from the dashboard only.
+
+Setup:
+
+1. Create a group, add the bot to it, and add every admin.
+2. Find the group's chat ID (it is negative) and put it in `TELEGRAM_ADMIN_CHAT_ID`.
+3. Make sure each admin has a `telegram_id` in the `users` table. Admins without one
+   cannot vote and still count towards the majority.
+
+The threshold is a simple majority of admins who can vote — four out of seven — and is
+fixed when the poll is created, so promoting an admin mid-vote does not change it. Only
+votes from users flagged `is_admin` are counted; everyone else in the group is ignored.
+The dashboard's approve and reject buttons keep working and close any open poll.
+
+Each request on `/admin/requests` shows how its vote is going: the running count against
+the threshold, and who voted which way. Requests submitted before polls were enabled
+simply show no vote block.
+
+Votes are read with `getUpdates` long polling, so the bot must not have a webhook set and
+only one instance may run with a given token. A `409 Conflict` in the logs means one of
+those two conditions is violated.
 
 ## Usage
 

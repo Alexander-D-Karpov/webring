@@ -12,8 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"webring/internal/approval"
 	"webring/internal/models"
-	"webring/internal/telegram"
+	"webring/internal/requests"
 
 	"github.com/gorilla/mux"
 )
@@ -57,7 +58,7 @@ func userDashboardHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		requests, err := getUserRequests(db, user.ID)
+		userRequests, err := getUserRequests(db, user.ID)
 		if err != nil {
 			log.Printf("Error fetching user requests: %v", err)
 			http.Error(w, "Error fetching requests", http.StatusInternalServerError)
@@ -73,7 +74,7 @@ func userDashboardHandler(db *sql.DB) http.HandlerFunc {
 		}{
 			User:     user,
 			Sites:    sites,
-			Requests: requests,
+			Requests: userRequests,
 			Request:  r,
 			Error:    "",
 		}
@@ -103,10 +104,10 @@ func renderDashboardWithError(w http.ResponseWriter, r *http.Request,
 		sites = []models.Site{}
 	}
 
-	requests, reqErr := getUserRequests(db, user.ID)
+	userRequests, reqErr := getUserRequests(db, user.ID)
 	if reqErr != nil {
 		log.Printf("Error fetching user requests: %v", reqErr)
-		requests = []models.UpdateRequest{}
+		userRequests = []models.UpdateRequest{}
 	}
 
 	data := struct {
@@ -118,7 +119,7 @@ func renderDashboardWithError(w http.ResponseWriter, r *http.Request,
 	}{
 		User:     user,
 		Sites:    sites,
-		Requests: requests,
+		Requests: userRequests,
 		Request:  r,
 		Error:    errorMsg,
 	}
@@ -202,21 +203,20 @@ func createSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 			"url":  url,
 		}
 
-		if err := createUpdateRequest(db, user.ID, nil, "create", changedFields); err != nil {
+		requestID, err := requests.Create(db, user.ID, nil, "create", changedFields)
+		if err != nil {
 			log.Printf("Error creating site request: %v", err)
 			http.Error(w, "Error creating request", http.StatusInternalServerError)
 			return
 		}
 
-		go func() {
-			req := &models.UpdateRequest{
-				UserID:        user.ID,
-				RequestType:   "create",
-				ChangedFields: changedFields,
-				CreatedAt:     time.Now(),
-			}
-			telegram.NotifyAdminsOfNewRequest(db, req, user)
-		}()
+		go approval.Announce(db, &models.UpdateRequest{
+			ID:            requestID,
+			UserID:        user.ID,
+			RequestType:   "create",
+			ChangedFields: changedFields,
+			CreatedAt:     time.Now(),
+		}, user)
 
 		http.Redirect(w, r, "/user", http.StatusSeeOther)
 	}
@@ -304,27 +304,26 @@ func updateSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		if err = createUpdateRequest(db, user.ID, &siteID, "update", changedFields); err != nil {
+		requestID, err := requests.Create(db, user.ID, &siteID, "update", changedFields)
+		if err != nil {
 			log.Printf("Error creating update request: %v", err)
 			http.Error(w, "Error creating request", http.StatusInternalServerError)
 			return
 		}
 
-		go func() {
-			req := &models.UpdateRequest{
-				UserID:        user.ID,
-				SiteID:        &siteID,
-				RequestType:   "update",
-				ChangedFields: changedFields,
-				CreatedAt:     time.Now(),
-				Site: &models.Site{
-					Slug: currentSite.Slug,
-					Name: currentSite.Name,
-					URL:  currentSite.URL,
-				},
-			}
-			telegram.NotifyAdminsOfNewRequest(db, req, user)
-		}()
+		go approval.Announce(db, &models.UpdateRequest{
+			ID:            requestID,
+			UserID:        user.ID,
+			SiteID:        &siteID,
+			RequestType:   "update",
+			ChangedFields: changedFields,
+			CreatedAt:     time.Now(),
+			Site: &models.Site{
+				Slug: currentSite.Slug,
+				Name: currentSite.Name,
+				URL:  currentSite.URL,
+			},
+		}, user)
 
 		http.Redirect(w, r, "/user", http.StatusSeeOther)
 	}
@@ -380,7 +379,7 @@ func getUserRequests(db *sql.DB, userID int) ([]models.UpdateRequest, error) {
 		}
 	}()
 
-	var requests []models.UpdateRequest
+	var list []models.UpdateRequest
 	for rows.Next() {
 		var req models.UpdateRequest
 		var changedFieldsJSON []byte
@@ -404,27 +403,12 @@ func getUserRequests(db *sql.DB, userID int) ([]models.UpdateRequest, error) {
 			}
 		}
 
-		requests = append(requests, req)
+		list = append(list, req)
 	}
 
 	if rowsErr := rows.Err(); rowsErr != nil {
 		return nil, rowsErr
 	}
 
-	return requests, nil
-}
-
-func createUpdateRequest(db *sql.DB, userID int, siteID *int, requestType string,
-	changedFields map[string]interface{}) error {
-	changedFieldsJSON, err := json.Marshal(changedFields)
-	if err != nil {
-		return err
-	}
-
-	_, err = db.Exec(`
-		INSERT INTO update_requests (user_id, site_id, request_type, changed_fields)
-		VALUES ($1, $2, $3, $4)
-	`, userID, siteID, requestType, changedFieldsJSON)
-
-	return err
+	return list, nil
 }

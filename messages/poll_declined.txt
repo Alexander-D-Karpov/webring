@@ -1,0 +1,11 @@
+*Request Declined by Vote*
+
+*Site:* {{.SiteName}}
+*User:* {{.UserName}}
+{{- if .Voters}}
+
+*Declined by:*
+{{- range .Voters}}
+  • {{.}}
+{{- end}}
+{{- end}}

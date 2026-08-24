@@ -2,7 +2,6 @@ package public
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -14,10 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"webring/internal/telegram"
-
+	"webring/internal/approval"
 	"webring/internal/auth"
 	"webring/internal/models"
+	"webring/internal/requests"
 
 	"github.com/gorilla/mux"
 	"github.com/lib/pq"
@@ -223,9 +222,9 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 
 		if telegramUsername != "" {
 			telegramUsernameClean := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(telegramUsername), "@"))
-			if matched, err := regexp.MatchString("^[a-zA-Z0-9_]{4,32}$", telegramUsernameClean); !matched {
-				if err != nil {
-					log.Printf("Error validating telegram username: %v", err)
+			if matched, matchErr := regexp.MatchString("^[a-zA-Z0-9_]{4,32}$", telegramUsernameClean); !matched {
+				if matchErr != nil {
+					log.Printf("Error validating telegram username: %v", matchErr)
 				} else {
 					log.Println("Invalid Telegram username format")
 				}
@@ -233,7 +232,6 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 				return
 			}
 
-			var err error
 			userID, err = findOrCreateUserByTelegramUsername(db, telegramUsernameClean)
 			if err != nil {
 				log.Printf("Error handling telegram username: %v", err)
@@ -253,7 +251,6 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 		if userID != nil {
 			requestUserID = *userID
 		} else {
-			var err error
 			requestUserID, err = getOrCreateAnonymousAdminUser(db)
 			if err != nil {
 				log.Printf("Error getting anonymous admin user: %v", err)
@@ -268,7 +265,8 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 			"url":  url,
 		}
 
-		if err := createUpdateRequest(db, requestUserID, nil, "create", changedFields); err != nil {
+		requestID, err := requests.Create(db, requestUserID, nil, "create", changedFields)
+		if err != nil {
 			log.Printf("Error creating submission request: %v", err)
 			http.Error(w, "Error submitting site", http.StatusInternalServerError)
 			return
@@ -288,14 +286,14 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 				}
 			}
 
-			req := &models.UpdateRequest{
+			approval.Announce(db, &models.UpdateRequest{
+				ID:            requestID,
 				UserID:        requestUserID,
 				SiteID:        nil,
 				RequestType:   "create",
 				ChangedFields: changedFields,
 				CreatedAt:     time.Now(),
-			}
-			telegram.NotifyAdminsOfNewRequest(db, req, submittingUser)
+			}, submittingUser)
 		}()
 
 		templatesMu.RLock()
@@ -406,21 +404,6 @@ func getRespondingSites(db *sql.DB) ([]models.PublicSite, error) {
 	}
 
 	return sites, nil
-}
-
-func createUpdateRequest(db *sql.DB, userID int, siteID *int, requestType string,
-	changedFields map[string]interface{}) error {
-	changedFieldsJSON, err := json.Marshal(changedFields)
-	if err != nil {
-		return err
-	}
-
-	_, err = db.Exec(`
-		INSERT INTO update_requests (user_id, site_id, request_type, changed_fields)
-		VALUES ($1, $2, $3, $4)
-	`, userID, siteID, requestType, changedFieldsJSON)
-
-	return err
 }
 
 func findOrCreateUserByTelegramUsername(db *sql.DB, username string) (*int, error) {

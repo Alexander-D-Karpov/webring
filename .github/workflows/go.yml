@@ -90,7 +90,11 @@ jobs:
           MEDIA_FOLDER: "media"
           SESSION_TTL_HOURS: "2160"
           SESSION_SECURE_COOKIE: "false"
-        run: go test -v -race -coverprofile=coverage.out ./...
+        # -p 1 runs one package's tests at a time. The integration tests share a single
+        # database, and the api tests reset it with TRUNCATE sites CASCADE, which reaches
+        # update_requests, request_polls and request_poll_votes through their foreign
+        # keys. Run in parallel, they delete each other's rows mid-test.
+        run: go test -v -p 1 -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4

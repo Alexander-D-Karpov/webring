@@ -35,13 +35,15 @@ lint-fix:
 	@echo "Running linter with auto-fix..."
 	@golangci-lint run --fix
 
+# -p 1: the integration tests share one database and the api tests reset it with
+# TRUNCATE ... CASCADE, so package test binaries must not run concurrently.
 test:
 	@echo "Running tests..."
-	@go test -v ./...
+	@go test -v -p 1 ./...
 
 test-coverage:
 	@echo "Running tests with coverage..."
-	@go test -v -coverprofile=coverage.out ./...
+	@go test -v -p 1 -coverprofile=coverage.out ./...
 	@go tool cover -html=coverage.out -o coverage.html
 
 # Build commands

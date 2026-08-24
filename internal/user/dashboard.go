@@ -21,6 +21,10 @@ import (
 
 var slugRegex = regexp.MustCompile(`^[a-z0-9-]{3,50}$`)
 
+// maxFormBytes caps the request body accepted by the form handlers. They only ever
+// carry a handful of short text fields.
+const maxFormBytes = 1 << 20 // 1 MiB
+
 func sanitizeInput(input string) string {
 	trimmed := strings.TrimSpace(input)
 	return html.EscapeString(trimmed)
@@ -133,6 +137,10 @@ func renderDashboardWithError(w http.ResponseWriter, r *http.Request,
 
 func createSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Cap the request body before anything parses the form, so an oversized
+		// upload cannot be buffered into memory.
+		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
+
 		user := GetUserFromContext(r.Context())
 		if user == nil {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -224,6 +232,10 @@ func createSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 
 func updateSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Cap the request body before anything parses the form, so an oversized
+		// upload cannot be buffered into memory.
+		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
+
 		user := GetUserFromContext(r.Context())
 		if user == nil {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)

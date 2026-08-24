@@ -35,6 +35,10 @@ var (
 	templatesMu sync.RWMutex
 )
 
+// maxFormBytes caps the request body accepted by the form handlers. They only ever
+// carry a handful of short text fields.
+const maxFormBytes = 1 << 20 // 1 MiB
+
 func InitTemplates(t *template.Template) {
 	templatesMu.Lock()
 	defer templatesMu.Unlock()
@@ -128,6 +132,10 @@ func dashboardHandler(db *sql.DB) http.HandlerFunc {
 
 func addSiteHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Cap the request body before anything parses the form, so an oversized
+		// upload cannot be buffered into memory.
+		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
+
 		idStr := r.FormValue("id")
 		slug := r.FormValue("slug")
 		name := r.FormValue("name")
@@ -231,6 +239,10 @@ func removeSiteHandler(db *sql.DB) http.HandlerFunc {
 
 func updateSiteHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Cap the request body before anything parses the form, so an oversized
+		// upload cannot be buffered into memory.
+		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
+
 		id := mux.Vars(r)["id"]
 		slug := r.FormValue("slug")
 		name := r.FormValue("name")

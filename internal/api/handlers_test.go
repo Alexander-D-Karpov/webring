@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -122,7 +123,13 @@ func (ts *TestServers) IsServerUp(index int) bool {
 }
 
 func setupTestDB(t *testing.T) *sql.DB {
-	connStr := "postgres://postgres:postgres@localhost:5432/webring_test?sslmode=disable"
+	// Skipping rather than hardcoding a DSN keeps `go test ./...` usable on a machine
+	// with no test database, instead of failing with a confusing connection error.
+	connStr := os.Getenv("TEST_DB_CONNECTION_STRING")
+	if connStr == "" {
+		t.Skip("TEST_DB_CONNECTION_STRING not set; skipping database integration tests")
+	}
+
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		t.Fatalf("Failed to connect to test database: %v", err)

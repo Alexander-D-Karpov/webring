@@ -30,7 +30,10 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          # Pinned deliberately. With `latest`, a golangci-lint release that adds or
+          # tightens a rule turns this pipeline red with no change to the code — which is
+          # exactly what happened between February and August 2026. Bump this on purpose.
+          version: v2.11.4
           args: --timeout=5m
 
   test:
@@ -75,6 +78,10 @@ jobs:
       - name: Run tests
         env:
           DB_CONNECTION_STRING: postgres://postgres:postgres@localhost:5432/webring_test?sslmode=disable
+          # Opt the database integration tests in. They are gated on their own variable
+          # rather than DB_CONNECTION_STRING because `make test` exports .env, which
+          # would otherwise point them at a developer's real database.
+          TEST_DB_CONNECTION_STRING: postgres://postgres:postgres@localhost:5432/webring_test?sslmode=disable
           CHECKER_DEBUG: "false"
           LOG_FILE_PATH: test.log
           TELEGRAM_BOT_TOKEN: ""

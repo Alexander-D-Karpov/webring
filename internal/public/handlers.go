@@ -37,6 +37,10 @@ var (
 	slugRegex   = regexp.MustCompile(`^[a-z0-9-]{3,50}$`)
 )
 
+// maxFormBytes caps the request body accepted by the form handlers. They only ever
+// carry a handful of short text fields.
+const maxFormBytes = 1 << 20 // 1 MiB
+
 func InitTemplates(t *template.Template) {
 	templatesMu.Lock()
 	defer templatesMu.Unlock()
@@ -140,6 +144,10 @@ func submitSitePageHandler() http.HandlerFunc {
 
 func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Cap the request body before anything parses the form, so an oversized
+		// upload cannot be buffered into memory.
+		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
+
 		if os.Getenv("REQUIRE_LOGIN_FOR_SUBMIT") == "true" {
 			sessionID := auth.GetSessionFromRequest(r)
 			if sessionID == "" {

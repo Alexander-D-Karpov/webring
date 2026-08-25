@@ -1,0 +1,30 @@
+# Build stage
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /build
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-s -w" -o ringcheck cmd/ringcheck/main.go
+
+# Final stage
+#
+# This image carries Chromium, which is why the checker is split out of the web server:
+# the server image stays small and never has to ship a browser.
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates tzdata chromium
+
+WORKDIR /root/
+
+COPY --from=builder /build/ringcheck .
+
+# Chromium's sandbox cannot start as root, and the checker only ever loads public pages.
+ENV CHROME_PATH=/usr/bin/chromium-browser
+
+CMD ["./ringcheck"]

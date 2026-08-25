@@ -10,6 +10,7 @@ This project is a webring relay service built with Go. It manages a list of webs
 - Telegram authentication and user management
 - Site submission and update request workflow with admin approval
 - Telegram approval polls: admins vote on each request, a majority decides it
+- Ring integrity checks in a real browser, with a public health page and tier list
 - Telegram notifications for status changes, submissions and approvals
 - Customizable notification messages via template files
 - Basic authentication for the dashboard
@@ -96,6 +97,77 @@ simply show no vote block.
 Votes are read with `getUpdates` long polling, so the bot must not have a webhook set and
 only one instance may run with a given token. A `409 Conflict` in the logs means one of
 those two conditions is violated.
+
+## Ring Integrity Checks
+
+`cmd/ringcheck` loads every member in headless Chromium at four screen sizes and judges
+whether the site is holding up its end of the ring. Each problem carries a severity and a
+cost; the site gets a 0-100 score and an S-F tier. A perfect widget is deliberately hard
+to build, so 100 is rare.
+
+| Check | Severity | Cost | Meaning |
+|---|---|---|---|
+| `site_down` | critical | score 0 | the uptime checker cannot reach it, so no browser is launched |
+| `render_failed` | critical | score 0 | navigation failed, timed out, or the body came back empty |
+| `no_widget` | critical | 60 | no link to the ring and none to either neighbor |
+| `wrong_slug` | major | 40 | the widget points at another member's endpoints, a copy-paste slip |
+| `hidden` | major | 35 | ring links are in the DOM but render invisible |
+| `stale_neighbors` | major | 25 | the only ring links point at members who are no longer neighbors |
+| `broken_link` | major | 22 | the widget's ring endpoint answers with an error |
+| `js_only` | major | 18 | the widget exists only once scripts have run |
+| `one_way` | major | 14 | the ring can only be walked in one direction |
+| `below_fold` | minor | up to 34 | the reader has to scroll to reach the widget |
+| `no_neighbor_name` | minor | 10 | the links say next and previous without saying who they are |
+| `redirected` | minor | 10 | the site now answers on a different host than the one on record |
+| `no_neighbor_icon` | minor | 8 | the widget shows no picture of its neighbors |
+| `tiny_target` | minor | 6 | the links are under 24px across, too small to tap on a phone |
+| `no_ring_link` | minor | 5 | nothing links back to the ring itself |
+| `slow_render` | minor | 5 | the page takes over eight seconds to become readable |
+
+`below_fold` is charged per screen of scrolling and weighted per size, so a widget lost on
+a desktop costs more than one lost on a phone, where scrolling is expected anyway. However
+poor a working widget is, it always scores above a member who never added one.
+
+Tiers are S at 100, A from 88, B from 72, C from 55, D from 30, and F below that.
+
+A member may wire the ring up either way: linking to `/{slug}/next` and `/{slug}/prev` on
+the ring, or linking straight to the current neighbors. Both count, and a widget that
+resolves its neighbors and names them scores better than a pair of bare arrows.
+
+Widget links are found by the shape of their path — a member slug followed by `next`,
+`prev` or `random` — rather than by domain. The ring answers on several hosts and is
+mounted under a path on one of them, so there is nothing to configure and a widget
+pointing at any of them is recognized.
+
+The checker looks inside framesets and iframes, follows anchors wired through `onclick`
+rather than `href`, and compares the rendered page against a plain fetch to tell a widget
+the server sent from one a script built.
+
+Results appear on two public pages. `/health` lists every member with its score and the
+reasons behind it, reachable from the footer of the main page. `/tiers` is the S-F tier
+list, reachable by direct URL.
+
+The checker is a separate binary and image so the web server never has to carry a
+browser; the two share the database, and the server only reads what the checker writes.
+
+```
+docker build -f Dockerfile.ringcheck -t webring-ringcheck .
+docker run --env-file .env webring-ringcheck
+```
+
+Running it locally needs a Chromium on `PATH` or in `CHROME_PATH`. `ringcheck -once` runs
+a single pass and exits, which is what you want when trying it out. Without a browser the
+checker refuses to start and says so; the web server is unaffected and simply shows no
+results yet.
+
+On NixOS the checker runs from a systemd timer:
+
+```nix
+services.webring.ringCheck = {
+  enable = true;
+  interval = "6h";
+};
+```
 
 ## Usage
 

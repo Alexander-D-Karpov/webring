@@ -50,6 +50,7 @@ test-coverage:
 build:
 	@echo "Building application..."
 	@go build -v -o webring cmd/server/main.go
+	@go build -v -o ringcheck cmd/ringcheck/main.go
 
 build-linux:
 	@echo "Building for Linux..."
@@ -71,7 +72,7 @@ dev:
 # Cleanup
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -f webring webring-linux webring.exe
+	@rm -f webring webring-linux webring.exe ringcheck
 	@rm -f coverage.out coverage.html
 
 # Tool installation
@@ -89,8 +90,9 @@ db-reset:
 
 # Docker commands
 docker-build:
-	@echo "Building Docker image..."
+	@echo "Building Docker images..."
 	@docker build -t webring:latest .
+	@docker build -f Dockerfile.ringcheck -t webring-ringcheck:latest .
 
 docker-run:
 	@echo "Running Docker container..."

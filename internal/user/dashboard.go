@@ -7,7 +7,6 @@ import (
 	"html"
 	"log"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,8 +17,6 @@ import (
 
 	"github.com/gorilla/mux"
 )
-
-var slugRegex = regexp.MustCompile(`^[a-z0-9-]{3,50}$`)
 
 // maxFormBytes caps the request body accepted by the form handlers. They only ever
 // carry a handful of short text fields.
@@ -166,7 +163,7 @@ func createSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		if !slugRegex.MatchString(slug) {
+		if !models.ValidSlug(slug) {
 			http.Error(w, "Invalid Slug", http.StatusBadRequest)
 			return
 		}
@@ -273,7 +270,7 @@ func updateSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 		changedFields := make(map[string]interface{})
 
 		if newSlug := sanitizeInput(r.FormValue("slug")); newSlug != "" && newSlug != currentSite.Slug {
-			if !slugRegex.MatchString(newSlug) {
+			if !models.ValidSlug(newSlug) {
 				http.Error(w, "Invalid Slug", http.StatusBadRequest)
 				return
 			}

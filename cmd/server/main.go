@@ -160,6 +160,7 @@ func registerHandlers(r *mux.Router, db *sql.DB) {
 	dashboard.RegisterHandlers(r, db)
 	user.RegisterHandlers(r, db)
 	public.RegisterSubmissionHandlers(r, db)
+	public.RegisterHealthHandlers(r, db)
 	api.RegisterSwaggerHandlers(r)
 	api.RegisterHandlers(r, db)
 	public.RegisterHandlers(r, db)

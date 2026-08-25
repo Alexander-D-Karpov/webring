@@ -34,7 +34,6 @@ type TemplateData struct {
 var (
 	templates   *template.Template
 	templatesMu sync.RWMutex
-	slugRegex   = regexp.MustCompile(`^[a-z0-9-]{3,50}$`)
 )
 
 // maxFormBytes caps the request body accepted by the form handlers. They only ever
@@ -61,6 +60,13 @@ func sanitizeURL(input string) string {
 
 func RegisterHandlers(r *mux.Router, db *sql.DB) {
 	r.HandleFunc("/", listSitesHandler(db)).Methods("GET")
+}
+
+// RegisterHealthHandlers wires up the ring integrity pages. /tiers is reachable by direct
+// URL only — nothing links to it.
+func RegisterHealthHandlers(r *mux.Router, db *sql.DB) {
+	r.HandleFunc("/health", healthPageHandler(db)).Methods("GET")
+	r.HandleFunc("/tiers", tiersPageHandler(db)).Methods("GET")
 }
 
 func RegisterSubmissionHandlers(r *mux.Router, db *sql.DB) {
@@ -187,7 +193,7 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		if !slugRegex.MatchString(slug) {
+		if !models.ValidSlug(slug) {
 			http.Error(w, "Invalid Slug format", http.StatusBadRequest)
 			return
 		}

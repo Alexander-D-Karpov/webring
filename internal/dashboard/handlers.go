@@ -29,7 +29,6 @@ const (
 	uniqueViolation        = "unique_violation"
 )
 
-var slugRegex = regexp.MustCompile(`^(?:[a-z0-9-]{3,50}|\d+)$`)
 var (
 	templates   *template.Template
 	templatesMu sync.RWMutex
@@ -153,7 +152,7 @@ func addSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		if !slugRegex.MatchString(slug) {
+		if !models.ValidAdminSlug(slug) {
 			http.Error(w, "Invalid Slug format", http.StatusBadRequest)
 			return
 		}
@@ -254,7 +253,7 @@ func updateSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		if !slugRegex.MatchString(slug) {
+		if !models.ValidAdminSlug(slug) {
 			http.Error(w, "Invalid Slug format", http.StatusBadRequest)
 			return
 		}

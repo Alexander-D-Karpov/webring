@@ -40,6 +40,37 @@ in with lib; {
       };
     };
 
+    ringCheck = {
+      enable = mkOption {
+        description = ''
+          Run the ring integrity checker, which loads every member in a headless
+          Chromium and records how well its webring widget works. The results are what
+          the /health and /tiers pages show; without it those pages stay empty.
+        '';
+        default = true;
+        type = types.bool;
+      };
+
+      interval = mkOption {
+        description = ''
+          How often to sweep the ring, as a systemd time span. A sweep visits every
+          member in a real browser, so this is deliberately infrequent.
+        '';
+        default = "6h";
+        type = types.str;
+      };
+
+      notify = mkOption {
+        description = ''
+          Send a Telegram message to the admin chat when a member's verdict changes.
+          Off by default: switching the checker on for a ring that has never been
+          measured would otherwise announce every member at once.
+        '';
+        default = false;
+        type = types.bool;
+      };
+    };
+
     environmentFile = mkOption {
       description = "Path to a .env with runtime secrets.";
       type = lib.types.nullOr lib.types.path;
@@ -115,6 +146,50 @@ in with lib; {
         ExecStart = "${webring}/bin/webring-server";
         Restart = "on-failure";
         EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
+      };
+    };
+
+    # The checker runs from a timer rather than as a long-lived service. A sweep is a
+    # burst of work every few hours, so there is nothing for a resident process to do in
+    # between, and systemd handles the schedule, the catch-up after downtime and the
+    # jitter better than a sleep loop would.
+    systemd.services.webring-ringcheck = mkIf cfg.ringCheck.enable {
+      description = "webring ring integrity check";
+      after = [ "network-online.target" ]
+        ++ optionals cfg.database.createLocally [ "postgresql.target" ]
+        ++ optionals cfg.database.migrate [ "webring-migration.service" ];
+      wants = [ "network-online.target" ];
+      environment = {
+        DB_CONNECTION_STRING = database;
+        HEALTH_NOTIFY = boolToString cfg.ringCheck.notify;
+        # Chromium writes a profile on startup and refuses to run without somewhere to
+        # put it.
+        HOME = "/var/lib/webring";
+      };
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.user;
+        Group = cfg.group;
+        WorkingDirectory = "/var/lib/webring";
+        ExecStart = "${webring}/bin/ringcheck -once";
+        EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
+        # Every member is visited one at a time in a browser, so a full sweep of a
+        # seventy-member ring runs to several minutes.
+        TimeoutStartSec = "45min";
+      };
+    };
+
+    systemd.timers.webring-ringcheck = mkIf cfg.ringCheck.enable {
+      description = "webring ring integrity check schedule";
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        # Let the machine settle before spending several minutes in a browser.
+        OnBootSec = "10min";
+        OnUnitActiveSec = cfg.ringCheck.interval;
+        # Catch up after downtime rather than silently skipping a sweep.
+        Persistent = true;
+        # Members are other people's servers; do not knock at the same second every time.
+        RandomizedDelaySec = "5min";
       };
     };
 

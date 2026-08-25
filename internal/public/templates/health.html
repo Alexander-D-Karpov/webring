@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ring Health - Webring</title>
+    <link rel="stylesheet" href="/static/public.css">
+    <link rel="preconnect" href="https://rsms.me/">
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
+</head>
+<body>
+<header>
+    <h1>
+        <i class="ri-bubble-chart-fill"></i>
+        Ring Health
+    </h1>
+</header>
+<main>
+    <p class="health-intro">
+        Every member is loaded in a real browser at four screen sizes to see whether its
+        webring links are there, point at the right neighbors, say who those neighbors
+        are, and can be found without scrolling.
+        {{if .CheckedAt}}<br>Last checked {{.CheckedAt}}.{{end}}
+    </p>
+
+    {{if .Sites}}
+    <ul class="health-list">
+        {{range .Sites}}
+        <li class="health-row">
+            <div class="health-head">
+                <div class="health-site">
+                    {{if .Favicon}}
+                    <img src="/media/{{.Favicon}}" alt="" width="20" height="20" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'favicon-fallback'}))">
+                    {{else}}
+                    <div class="favicon-fallback"></div>
+                    {{end}}
+                    <a href="{{.Member.URL}}" target="_blank" rel="noopener">
+                        {{.Member.Name}}
+                        <i class="ri-arrow-right-up-line"></i>
+                    </a>
+                </div>
+                {{if .Checked}}
+                <span class="score score-{{.Report.Tier}}" title="Tier {{.Report.Tier}}">
+                    {{.Report.Tier}}<span class="score-number">{{.Report.Score}}</span>
+                </span>
+                {{else}}
+                <span class="score score-none" title="Not checked yet">&mdash;</span>
+                {{end}}
+            </div>
+
+            {{if .Checked}}
+                {{if .Report.Findings}}
+                <ul class="reasons">
+                    {{range .Report.Findings}}
+                    <li class="reason reason-{{.Severity}}">
+                        <i class="ri-close-circle-fill"></i>
+                        <div class="reason-body">
+                            <span class="reason-title">{{.Title}}</span>
+                            {{if .Cost}}<span class="reason-cost">&minus;{{.Cost}}</span>{{end}}
+                            {{if .Detail}}<span class="reason-detail">{{.Detail}}</span>{{end}}
+                            {{if .Advice}}<span class="reason-advice">{{.Advice}}</span>{{end}}
+                        </div>
+                    </li>
+                    {{end}}
+                </ul>
+                {{else}}
+                <ul class="reasons">
+                    <li class="reason reason-ok">
+                        <i class="ri-checkbox-circle-fill"></i>
+                        <div class="reason-body">
+                            <span class="reason-title">Everything checks out</span>
+                        </div>
+                    </li>
+                </ul>
+                {{end}}
+            {{else}}
+            <ul class="reasons">
+                <li class="reason reason-none">
+                    <i class="ri-time-line"></i>
+                    <div class="reason-body">
+                        <span class="reason-title">Not checked yet</span>
+                    </div>
+                </li>
+            </ul>
+            {{end}}
+        </li>
+        {{end}}
+    </ul>
+    {{else}}
+    <p class="health-intro">No sites in the ring yet.</p>
+    {{end}}
+
+    <section class="checks-key">
+        <h2>What is checked</h2>
+        <ul class="key-list">
+            {{range .Checks}}
+            <li class="key-item">
+                <span class="key-severity key-{{.Severity}}"></span>
+                <div class="reason-body">
+                    <span class="reason-title">{{.Title}}</span>
+                    {{if .Advice}}<span class="reason-advice">{{.Advice}}</span>{{end}}
+                </div>
+            </li>
+            {{end}}
+        </ul>
+    </section>
+</main>
+<footer>
+    <a href="/">
+        <i class="ri-arrow-left-line"></i>
+        Back to the ring
+    </a>
+</footer>
+</body>
+</html>

@@ -137,17 +137,21 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          BINARY_NAME="webring-${{ matrix.goos }}-${{ matrix.goarch }}"
+          SUFFIX="${{ matrix.goos }}-${{ matrix.goarch }}"
+          EXT=""
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME="${BINARY_NAME}.exe"
+            EXT=".exe"
           fi
-          go build -v -ldflags="-s -w" -o "$BINARY_NAME" cmd/server/main.go
+          go build -v -ldflags="-s -w" -o "webring-${SUFFIX}${EXT}" cmd/server/main.go
+          go build -v -ldflags="-s -w" -o "ringcheck-${SUFFIX}${EXT}" cmd/ringcheck/main.go
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: webring-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: webring-*
+          path: |
+            webring-*
+            ringcheck-*
           retention-days: 7
 
   docker:
@@ -169,6 +173,18 @@ jobs:
           context: .
           push: false
           tags: webring:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The checker ships separately because it carries Chromium; keeping it out of the
+      # server image is the whole point of the split.
+      - name: Build ring checker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.ringcheck
+          push: false
+          tags: webring-ringcheck:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -206,7 +222,7 @@ jobs:
           
           # Create checksums file
           cd release
-          sha256sum webring-* > checksums.txt
+          sha256sum webring-* ringcheck-* > checksums.txt
           cd ..
 
       - name: Generate release tag

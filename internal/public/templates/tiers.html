@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tier List - Webring</title>
+    <link rel="stylesheet" href="/static/public.css">
+    <link rel="preconnect" href="https://rsms.me/">
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
+</head>
+<body>
+<header>
+    <h1>
+        <i class="ri-bubble-chart-fill"></i>
+        Ring Tier List
+    </h1>
+</header>
+<main>
+    <p class="health-intro">
+        Members graded on how well their webring widget works.
+        {{if .CheckedAt}}<br>Last checked {{.CheckedAt}}.{{end}}
+    </p>
+
+    <div class="tier-list">
+        {{range .Rows}}
+        <div class="tier-row">
+            <div class="tier-label tier-{{.Tier}}">{{.Tier}}</div>
+            <div class="tier-members">
+                {{range .Sites}}
+                <a class="tier-member" href="{{.Member.URL}}" target="_blank" rel="noopener"
+                   title="{{.Member.Name}} &mdash; {{.Report.Score}}/100">
+                    {{if .Favicon}}
+                    <img src="/media/{{.Favicon}}" alt="" width="20" height="20" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'favicon-fallback'}))">
+                    {{else}}
+                    <div class="favicon-fallback"></div>
+                    {{end}}
+                    <span>{{.Member.Name}}</span>
+                </a>
+                {{end}}
+            </div>
+        </div>
+        {{end}}
+    </div>
+
+    {{if .Unchecked}}
+    <div class="tier-row tier-pending">
+        <div class="tier-label tier-none">?</div>
+        <div class="tier-members">
+            {{range .Unchecked}}
+            <span class="tier-member tier-member-plain">{{.Member.Name}}</span>
+            {{end}}
+        </div>
+    </div>
+    {{end}}
+</main>
+<footer>
+    <a href="/">
+        <i class="ri-arrow-left-line"></i>
+        Back to the ring
+    </a>
+</footer>
+</body>
+</html>

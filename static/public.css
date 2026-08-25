@@ -217,3 +217,217 @@ li .favicon-fallback {
         padding: 1rem;
     }
 }
+/* Ring health and tier list.
+   The member list on the front page is a flat list, not cards; these pages follow it. */
+
+.health-intro {
+    color: var(--color-gray-400);
+    margin-bottom: 2rem;
+    line-height: 1.5;
+    font-size: 0.9375rem;
+}
+
+.health-list {
+    gap: 1.5rem;
+}
+
+.health-row {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+}
+
+.health-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.health-site {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    min-width: 0;
+}
+
+.score {
+    display: flex;
+    align-items: baseline;
+    gap: 0.375rem;
+    font-weight: 700;
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+
+.score-number {
+    font-variant-numeric: tabular-nums;
+    font-size: 0.8125rem;
+    opacity: 0.65;
+}
+
+.score-S, .score-A { color: var(--color-green-600); }
+.score-B          { color: var(--color-primary-400); }
+.score-C, .score-D { color: var(--color-yellow-400); }
+.score-F          { color: var(--color-red-400); }
+.score-none       { color: var(--color-gray-600); }
+
+.reasons {
+    gap: 0.375rem;
+    font-size: 0.875rem;
+    padding-left: 2.25rem;
+}
+
+.reason {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.reason-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    min-width: 0;
+}
+
+.reason-cost {
+    color: var(--color-red-300);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.75rem;
+}
+
+.reason-advice {
+    color: var(--color-gray-500);
+    font-size: 0.8125rem;
+    font-style: italic;
+    overflow-wrap: anywhere;
+}
+
+.checks-key {
+    margin-top: 3rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--color-gray-900);
+}
+
+.checks-key h2 {
+    font-size: 1rem;
+    color: var(--color-gray-400);
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+    margin-bottom: 1rem;
+}
+
+.key-list { gap: 0.75rem; font-size: 0.875rem; }
+
+.key-item {
+    display: flex;
+    align-items: baseline;
+    gap: 0.625rem;
+}
+
+.key-severity {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+    align-self: center;
+}
+
+.key-critical { background: var(--color-red-400); }
+.key-major    { background: var(--color-red-300); }
+.key-minor    { background: var(--color-yellow-400); }
+
+.reason i { flex-shrink: 0; font-size: 0.8125rem; }
+
+.reason-critical i { color: var(--color-red-400); }
+.reason-major i    { color: var(--color-red-300); }
+.reason-minor i    { color: var(--color-yellow-400); }
+.reason-ok i       { color: var(--color-green-600); }
+.reason-none i     { color: var(--color-gray-600); }
+
+.reason-title { color: var(--color-gray-200); }
+
+.reason-detail {
+    color: var(--color-gray-400);
+    overflow-wrap: anywhere;
+}
+
+.tier-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.tier-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0.5rem;
+}
+
+.tier-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3.5rem;
+    flex-shrink: 0;
+    border-radius: 6px;
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: var(--color-gray-950);
+}
+
+.tier-S { background: #ff7f7f; }
+.tier-A { background: #ffbf7f; }
+.tier-B { background: #ffdf7f; }
+.tier-C { background: #ffff7f; }
+.tier-D { background: #bfff7f; }
+.tier-F { background: #7fbfff; }
+.tier-none { background: var(--color-gray-800); color: var(--color-gray-400); }
+
+.tier-members {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    flex: 1;
+    min-height: 3.5rem;
+    background: var(--color-primary-950);
+    border-radius: 6px;
+}
+
+.tier-member {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0.625rem;
+    border-radius: 4px;
+    background: var(--color-gray-900);
+    font-size: 0.875rem;
+    text-decoration: none;
+}
+
+.tier-member img, .tier-member .favicon-fallback {
+    width: 16px;
+    height: 16px;
+    aspect-ratio: 1 / 1;
+}
+
+.tier-member .favicon-fallback {
+    background: var(--color-gray-800);
+    border-radius: 2px;
+}
+
+.tier-member-plain { color: var(--color-gray-400); }
+
+.tier-empty {
+    color: var(--color-gray-600);
+    align-self: center;
+    padding-left: 0.5rem;
+}
+
+.tier-pending { margin-top: 1rem; }
+
+footer { display: flex; gap: 1.5rem; flex-wrap: wrap; }

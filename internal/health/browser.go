@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
@@ -27,10 +28,8 @@ const (
 	reflowDelay = 400 * time.Millisecond
 	// readyPollInterval is how often the document is asked whether it has parsed yet.
 	readyPollInterval = 100 * time.Millisecond
-	// rawFetchTimeout bounds the plain, script-free fetch of the same page.
-	rawFetchTimeout = 15 * time.Second
-	// maxRawHTML caps how much of the unrendered page is read.
-	maxRawHTML = 4 << 20
+	// followTimeout bounds a request that follows a widget link to see if it answers.
+	followTimeout = 15 * time.Second
 	// retryDelay is the pause before a second attempt at a page whose connection dropped.
 	retryDelay = 3 * time.Second
 )
@@ -86,7 +85,7 @@ func NewBrowser(ctx context.Context, execPath string) (*Browser, error) {
 	return &Browser{
 		allocCtx: allocCtx,
 		cancel:   cancel,
-		http:     &http.Client{Timeout: rawFetchTimeout},
+		http:     &http.Client{Timeout: followTimeout},
 	}, nil
 }
 
@@ -343,13 +342,11 @@ func (b *Browser) visitOnce(ctx context.Context, target string) PageObservation 
 		}
 	}
 
-	links := mergeViewports(pages)
-	markRawLinks(links, b.rawMarkup(ctx, target))
-
 	return PageObservation{
 		Rendered:      true,
 		FinalURL:      finalURL,
-		Links:         links,
+		Links:         mergeViewports(pages),
+		NoScriptHrefs: b.noScriptHrefs(ctx, target),
 		TimeToRender:  renderedAt,
 		WidgetMarkers: first.Markers,
 	}
@@ -371,67 +368,52 @@ func collectInto(pages map[Viewport]rawPage, v Viewport) chromedp.Action {
 	})
 }
 
-// rawMarkup fetches the page without a browser, so the checker can tell what the server
-// itself sent from what a script added afterwards. An empty result means the plain fetch
-// failed, and no conclusion is drawn from it.
-func (b *Browser) rawMarkup(ctx context.Context, target string) string {
-	ctx, cancel := context.WithTimeout(ctx, rawFetchTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, http.NoBody)
-	if err != nil {
-		return ""
-	}
-	req.Header.Set("User-Agent", browserUserAgent)
-
-	resp, err := b.http.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			log.Printf("Error closing raw fetch body: %v", closeErr)
-		}
-	}()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRawHTML))
-	if err != nil {
-		return ""
-	}
-	return string(body)
-}
-
-// markRawLinks records which links the server sent itself.
+// noScriptHrefs loads the page again with scripting switched off and reports the links
+// that survive.
 //
-// Matching is a substring search over the markup rather than a parse: the question is
-// only whether the address appears at all, and that answer cannot be spoiled by the
-// malformed HTML these pages are full of.
-func markRawLinks(links []Link, markup string) {
-	if markup == "" {
-		// The plain fetch failed, so there is nothing to compare against. Assume the
-		// links were served rather than accuse the site of needing JavaScript.
-		for i := range links {
-			links[i].InRawHTML = true
-		}
-		return
+// This is the only honest way to ask whether a widget works without JavaScript. Comparing
+// the rendered links against the served markup looked equivalent and was not: a site can
+// build one widget in script and ship a different one in a noscript fallback, and the two
+// need not share a single URL. Rendering with scripts disabled sees exactly what a reader
+// with them off would see, noscript blocks included.
+//
+// A failure here returns nothing and is treated as no evidence rather than as proof the
+// site needs scripts.
+func (b *Browser) noScriptHrefs(ctx context.Context, target string) []string {
+	tabCtx, cancelTab := chromedp.NewContext(b.allocCtx)
+	defer cancelTab()
+
+	tabCtx, cancelTimeout := context.WithTimeout(tabCtx, pageTimeout)
+	defer cancelTimeout()
+
+	defer context.AfterFunc(ctx, cancelTimeout)()
+
+	var collected rawPage
+	err := chromedp.Run(tabCtx,
+		// Must be set before navigating, or the page's scripts have already run.
+		emulation.SetScriptExecutionDisabled(true),
+		chromedp.EmulateViewport(int64(Viewports[0].Width), int64(Viewports[0].Height)),
+		navigate(target),
+		waitForDOM(),
+		chromedp.Sleep(reflowDelay),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			var encoded string
+			if evalErr := chromedp.Evaluate(collectScript, &encoded).Do(ctx); evalErr != nil {
+				return evalErr
+			}
+			return decodeJSON(encoded, &collected)
+		}),
+	)
+	if err != nil {
+		log.Printf("Ring integrity: could not load %s with scripts off: %v", target, err)
+		return nil
 	}
 
-	for i := range links {
-		links[i].InRawHTML = strings.Contains(markup, links[i].Href) ||
-			strings.Contains(markup, trimScheme(links[i].Href)) ||
-			strings.Contains(markup, strings.TrimSuffix(links[i].Href, "/"))
+	hrefs := make([]string, 0, len(collected.Links))
+	for _, l := range collected.Links {
+		hrefs = append(hrefs, l.Href)
 	}
-}
-
-// trimScheme drops the protocol so a link written as //example.com, or with the other
-// scheme, still matches.
-func trimScheme(raw string) string {
-	for _, prefix := range []string{"https://", "http://"} {
-		if strings.HasPrefix(raw, prefix) {
-			return strings.TrimPrefix(raw, prefix)
-		}
-	}
-	return raw
+	return hrefs
 }
 
 // mergeViewports folds the per-viewport measurements into one set of links.
@@ -529,7 +511,7 @@ func waitForDOM() chromedp.Action {
 // except the slug, and a wrong slug is already its own finding. What this catches is an
 // endpoint that answers with an error, which means the slug no longer exists at all.
 func (b *Browser) FollowRingLink(ctx context.Context, href string) NeighborCheck {
-	ctx, cancel := context.WithTimeout(ctx, rawFetchTimeout)
+	ctx, cancel := context.WithTimeout(ctx, followTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, href, http.NoBody)

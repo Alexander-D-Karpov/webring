@@ -114,12 +114,11 @@ to build, so 100 is rare.
 | `hidden` | major | 35 | ring links are in the DOM but render invisible |
 | `stale_neighbors` | major | 25 | the only ring links point at members who are no longer neighbors |
 | `broken_link` | major | 22 | the widget's ring endpoint answers with an error |
-| `js_only` | major | 18 | the widget exists only once scripts have run |
+| `js_only` | major | 18 | with scripts off the page offers no way round the ring |
 | `one_way` | major | 14 | the ring can only be walked in one direction |
 | `below_fold` | minor | up to 34 | the reader has to scroll to reach the widget |
 | `no_neighbor_name` | minor | 10 | the links say next and previous without saying who they are |
 | `redirected` | minor | 10 | the site now answers on a different host than the one on record |
-| `no_neighbor_icon` | minor | 8 | the widget shows no picture of its neighbors |
 | `tiny_target` | minor | 6 | the links are under 24px across, too small to tap on a phone |
 | `no_ring_link` | minor | 5 | nothing links back to the ring itself |
 | `slow_render` | minor | 5 | the page takes over eight seconds to become readable |
@@ -140,8 +139,10 @@ mounted under a path on one of them, so there is nothing to configure and a widg
 pointing at any of them is recognized.
 
 The checker looks inside framesets and iframes, follows anchors wired through `onclick`
-rather than `href`, and compares the rendered page against a plain fetch to tell a widget
-the server sent from one a script built.
+rather than `href`, and loads every page a second time with scripting switched off to see
+what a reader without JavaScript is left with. A site may build one widget in script and
+ship a different one in a `<noscript>` fallback; the two need not share a URL, and only
+the scripts-off render can tell whether anything still carries the reader onward.
 
 Results appear on two public pages. `/health` lists every member with its score and the
 reasons behind it, reachable from the footer of the main page. `/tiers` is the S-F tier

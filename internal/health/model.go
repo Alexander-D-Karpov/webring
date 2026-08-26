@@ -86,8 +86,6 @@ const (
 	CodeBelowFold Code = "below_fold"
 	// CodeNoNeighborName means the widget says "next" rather than naming who is next.
 	CodeNoNeighborName Code = "no_neighbor_name"
-	// CodeNoNeighborIcon means the widget shows no picture of its neighbors.
-	CodeNoNeighborIcon Code = "no_neighbor_icon"
 	// CodeNoRingLink means the widget never links to the ring itself, so a visitor
 	// cannot find out what they have stumbled into.
 	CodeNoRingLink Code = "no_ring_link"
@@ -113,7 +111,6 @@ var penalties = map[Code]int{
 	CodeOneWay:         14,
 	CodeNoNeighborName: 10,
 	CodeRedirected:     10,
-	CodeNoNeighborIcon: 8,
 	CodeTinyTarget:     6,
 	CodeNoRingLink:     5,
 	CodeSlowRender:     5,
@@ -132,7 +129,6 @@ var severities = map[Code]Severity{
 	CodeOneWay:         SeverityMajor,
 	CodeBelowFold:      SeverityMinor,
 	CodeNoNeighborName: SeverityMinor,
-	CodeNoNeighborIcon: SeverityMinor,
 	CodeNoRingLink:     SeverityMinor,
 	CodeTinyTarget:     SeverityMinor,
 	CodeSlowRender:     SeverityMinor,
@@ -152,7 +148,6 @@ var titles = map[Code]string{
 	CodeOneWay:         "Ring can only be walked one way",
 	CodeBelowFold:      "Ring links need scrolling",
 	CodeNoNeighborName: "Widget does not name its neighbors",
-	CodeNoNeighborIcon: "Widget shows no neighbor icons",
 	CodeNoRingLink:     "Widget does not link to the ring",
 	CodeTinyTarget:     "Widget is hard to tap",
 	CodeSlowRender:     "Page is slow to appear",
@@ -171,7 +166,6 @@ var advice = map[Code]string{
 	CodeOneWay:         "Add the missing direction so the ring can be walked both ways.",
 	CodeBelowFold:      "Move the widget into the first screen.",
 	CodeNoNeighborName: "Show who prev and next are, not just arrows.",
-	CodeNoNeighborIcon: "Show your neighbors' icons alongside their names.",
 	CodeNoRingLink:     "Link the ring itself so visitors can find the other members.",
 	CodeTinyTarget:     "Make the links big enough to tap on a phone.",
 	CodeSlowRender:     "The page takes a while to appear; visitors may leave first.",
@@ -182,7 +176,7 @@ var advice = map[Code]string{
 var Checks = []Code{
 	CodeSiteDown, CodeRenderFailed, CodeNoWidget, CodeWrongSlug, CodeHidden,
 	CodeStaleNeighbors, CodeBrokenLink, CodeJSOnly, CodeOneWay, CodeBelowFold,
-	CodeNoNeighborName, CodeNoNeighborIcon, CodeNoRingLink,
+	CodeNoNeighborName, CodeNoRingLink,
 	CodeTinyTarget, CodeSlowRender, CodeRedirected,
 }
 

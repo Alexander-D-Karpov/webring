@@ -45,7 +45,7 @@ func buriedBy(screens int) map[Viewport]int {
 
 // link is a plain, visible, server-rendered anchor with no text or pictures.
 func link(href string) Link {
-	return Link{Href: href, Visible: true, Screens: firstScreen(), TapSize: 40, InRawHTML: true}
+	return Link{Href: href, Visible: true, Screens: firstScreen(), TapSize: 40}
 }
 
 // seen builds an observation from bare links: they work, but say nothing about where they
@@ -54,6 +54,7 @@ func seen(hrefs ...string) PageObservation {
 	obs := PageObservation{Rendered: true, FinalURL: "https://mine.example/"}
 	for _, h := range hrefs {
 		obs.Links = append(obs.Links, link(h))
+		obs.NoScriptHrefs = append(obs.NoScriptHrefs, h)
 	}
 	return obs
 }
@@ -73,6 +74,9 @@ func perfect() PageObservation {
 	next.Images = []string{"https://otor.ing/media/next.png"}
 
 	obs.Links = []Link{prev, next, link("https://otor.ing/")}
+	obs.NoScriptHrefs = []string{
+		"https://otor.ing/mine/prev", "https://otor.ing/mine/next", "https://otor.ing/",
+	}
 	return obs
 }
 
@@ -131,8 +135,8 @@ func TestOnlyAThoroughWidgetScoresPerfect(t *testing.T) {
 func TestBareWorkingLinksFallShortOfPerfect(t *testing.T) {
 	r := Analyze(seen("https://otor.ing/mine/prev", "https://otor.ing/mine/next"), ring())
 
-	assertCodes(t, r, CodeNoNeighborName, CodeNoNeighborIcon, CodeNoRingLink)
-	assertScore(t, r, 100-10-8-5)
+	assertCodes(t, r, CodeNoNeighborName, CodeNoRingLink)
+	assertScore(t, r, 100-10-5)
 	if r.Tier != "B" {
 		t.Errorf("tier = %q, want B", r.Tier)
 	}
@@ -144,8 +148,8 @@ func TestBareWorkingLinksFallShortOfPerfect(t *testing.T) {
 func TestDirectLinksToCurrentNeighborsAreNotAFault(t *testing.T) {
 	r := Analyze(seen("https://prev.example", "https://next.example"), ring())
 
-	assertCodes(t, r, CodeNoNeighborName, CodeNoNeighborIcon, CodeNoRingLink)
-	assertScore(t, r, 100-10-8-5)
+	assertCodes(t, r, CodeNoNeighborName, CodeNoRingLink)
+	assertScore(t, r, 100-10-5)
 }
 
 // The widget the ring's own author writes: neighbors resolved and named, their icons
@@ -197,16 +201,41 @@ func TestWidgetBuiltEntirelyInScript(t *testing.T) {
 	}
 }
 
-// Links a script adds after the fact are invisible to a reader with scripts off.
-func TestLinksAddedByScriptAreFlagged(t *testing.T) {
+// A widget that vanishes when scripts are off leaves those readers stranded.
+func TestWidgetThatDisappearsWithoutScriptsIsFlagged(t *testing.T) {
 	obs := perfect()
-	for i := range obs.Links {
-		obs.Links[i].InRawHTML = false
-	}
+	obs.NoScriptHrefs = []string{"https://mine.example/about", "https://unrelated.example"}
 
 	r := Analyze(obs, ring())
 	assertCodes(t, r, CodeJSOnly)
 	assertScore(t, r, 100-18)
+}
+
+// A site may build one widget in script and ship a different one in a noscript fallback.
+// The two need not share a single URL; what matters is that the reader can still move on.
+func TestNoscriptFallbackCountsEvenWhenItUsesDifferentLinks(t *testing.T) {
+	obs := perfect()
+	// With scripts on the widget names the neighbors directly; with them off a noscript
+	// block offers the ring's own endpoints instead.
+	obs.Links = []Link{link("https://prev.example"), link("https://next.example"),
+		link("https://otor.ing/")}
+	obs.NoScriptHrefs = []string{
+		"https://otor.ing/mine/prev", "https://otor.ing/mine/next",
+	}
+
+	if r := Analyze(obs, ring()); r.Has(CodeJSOnly) {
+		t.Errorf("a working noscript fallback was called script-only: %v", codes(r))
+	}
+}
+
+// Failing to load the page with scripts off is no evidence either way.
+func TestUnknownNoScriptResultIsNotHeldAgainstTheSite(t *testing.T) {
+	obs := perfect()
+	obs.NoScriptHrefs = nil
+
+	if r := Analyze(obs, ring()); r.Has(CodeJSOnly) {
+		t.Errorf("an unavailable scripts-off render was treated as proof: %v", codes(r))
+	}
 }
 
 func TestCopiedWidgetPointsAtAnotherMember(t *testing.T) {
@@ -391,16 +420,6 @@ func TestNeighborNamesAndIcons(t *testing.T) {
 		}
 		if r := Analyze(obs, ring()); !r.Has(CodeNoNeighborName) {
 			t.Errorf("bare arrows were treated as naming the neighbors")
-		}
-	})
-
-	t.Run("no icons", func(t *testing.T) {
-		obs := perfect()
-		for i := range obs.Links {
-			obs.Links[i].Images = nil
-		}
-		if r := Analyze(obs, ring()); !r.Has(CodeNoNeighborIcon) {
-			t.Errorf("a widget with no pictures was not flagged")
 		}
 	})
 }
@@ -745,8 +764,8 @@ func TestAWorkingWidgetAlwaysOutranksNoWidget(t *testing.T) {
 	for i := range obs.Links {
 		obs.Links[i].Screens = buriedBy(9)
 		obs.Links[i].TapSize = 6
-		obs.Links[i].InRawHTML = false
 	}
+	obs.NoScriptHrefs = []string{"https://unrelated.example"}
 	obs.TimeToRender = 30 * time.Second
 
 	poor := Analyze(obs, ring())

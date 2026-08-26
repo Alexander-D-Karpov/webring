@@ -25,9 +25,6 @@ type Link struct {
 	Screens map[Viewport]int
 	// TapSize is the smaller side of the link's box, in pixels, at the mobile viewport.
 	TapSize float64
-	// InRawHTML is true when the link is in the markup the server sent, rather than
-	// something a script added afterwards.
-	InRawHTML bool
 }
 
 // aboveFold reports whether the link needs no scrolling at a viewport.
@@ -46,6 +43,9 @@ type PageObservation struct {
 	// FinalURL is where the browser ended up after redirects.
 	FinalURL string
 	Links    []Link
+	// NoScriptHrefs are the links still present when the page is rendered with scripting
+	// switched off. Empty means the check could not be made, not that nothing survived.
+	NoScriptHrefs []string
 	// TimeToRender is how long the page took to become readable.
 	TimeToRender time.Duration
 	// WidgetMarkers are elements the page itself labeled as webring furniture, by id or
@@ -382,7 +382,7 @@ func Analyze(obs PageObservation, ring RingContext) Report {
 		return a.finish()
 	}
 
-	a.checkPresentation(found, traversal, widget)
+	a.checkPresentation(obs, found, traversal, widget)
 	return a.finish()
 }
 
@@ -519,7 +519,7 @@ func (a *analysis) checkVisibility(traversal, widget []Link) bool {
 
 // checkPresentation judges how much the widget tells the reader. A pair of bare arrows
 // works, but it says nothing about where they lead.
-func (a *analysis) checkPresentation(found classified, traversal, widget []Link) {
+func (a *analysis) checkPresentation(obs PageObservation, found classified, traversal, widget []Link) {
 	judged := traversal
 	if len(judged) == 0 {
 		judged = widget
@@ -529,16 +529,12 @@ func (a *analysis) checkPresentation(found classified, traversal, widget []Link)
 		a.add(CodeNoNeighborName, "the links say next and previous without saying who they are")
 	}
 
-	if !showsIcons(judged) {
-		a.add(CodeNoNeighborIcon, "the widget carries no picture of its neighbors")
-	}
-
 	if len(found.ringHome) == 0 {
 		a.add(CodeNoRingLink, "nothing links back to the ring itself")
 	}
 
-	if inRaw := filter(judged, func(l Link) bool { return l.InRawHTML }); len(inRaw) == 0 {
-		a.add(CodeJSOnly, "the links only exist once scripts have run")
+	if a.needsScripts(obs) {
+		a.add(CodeJSOnly, "with scripts off the page offers no way round the ring")
 	}
 
 	if smallest := smallestTapTarget(judged); smallest > 0 && smallest < minTapSize {
@@ -546,6 +542,37 @@ func (a *analysis) checkPresentation(found classified, traversal, widget []Link)
 			"the links are %.0fpx across on a phone, under the %dpx a finger needs",
 			smallest, minTapSize))
 	}
+}
+
+// needsScripts reports whether the ring becomes unreachable with scripting off.
+//
+// The question is not whether the same links survive — a site may build one widget in
+// script and ship another in a noscript fallback, and the two need not share a URL. What
+// matters is that something still carries the reader onward.
+//
+// An empty result means the page could not be loaded that way at all, which is no
+// evidence either way; the site keeps the benefit of the doubt.
+func (a *analysis) needsScripts(obs PageObservation) bool {
+	if len(obs.NoScriptHrefs) == 0 {
+		return false
+	}
+
+	neighbors := map[string]bool{}
+	for _, m := range []Member{a.ring.Prev, a.ring.Next} {
+		if n := normalizeURL(m.URL); n != "" {
+			neighbors[n] = true
+		}
+	}
+
+	for _, href := range obs.NoScriptHrefs {
+		if slug, _, ok := ringLinkSlug(href, a.ring.Slugs); ok && slug == a.ring.Site.Slug {
+			return false
+		}
+		if neighbors[normalizeURL(href)] {
+			return false
+		}
+	}
+	return true
 }
 
 // namesNeighbors reports whether the widget says who its neighbors are, rather than just
@@ -566,15 +593,6 @@ func (a *analysis) namesNeighbors(links []Link) bool {
 			if strings.Contains(text, strings.ToLower(want)) {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func showsIcons(links []Link) bool {
-	for _, link := range links {
-		if len(link.Images) > 0 {
-			return true
 		}
 	}
 	return false

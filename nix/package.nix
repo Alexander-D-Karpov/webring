@@ -7,9 +7,7 @@
 
   nativeBuildInputs = [ makeWrapper ];
 
-  # MUST BE REGENERATED. Adding chromedp changed the dependency set and there was no nix
-  # available to compute the new hash. The first build fails and prints the value to use.
-  vendorHash = lib.fakeHash;
+  vendorHash = "sha256-4X/3PV+Bj7gwXLH5wk/bvK0aikc4nlvb33iNAshv2IM=";
 
   postInstall = ''
     mv $out/bin/server $out/bin/webring-server

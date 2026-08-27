@@ -777,3 +777,36 @@ func TestAWorkingWidgetAlwaysOutranksNoWidget(t *testing.T) {
 			poor.Score, none.Score, codes(poor))
 	}
 }
+
+// Several checks can notice the same fault from different angles. Reporting it twice reads
+// as two separate problems and charges the member twice for one mistake.
+func TestOneFindingPerProblem(t *testing.T) {
+	// A page that marks up a widget, builds it in script, and leaves only a link to a
+	// former neighbor trips the marker check and the scripts-off check at once.
+	obs := PageObservation{
+		Rendered:      true,
+		FinalURL:      "https://mine.example/",
+		WidgetMarkers: []string{"WEBRING_LEFT", "WEBRING_RIGHT"},
+		Links:         []Link{link("https://old.example")},
+		NoScriptHrefs: []string{"https://unrelated.example/"},
+	}
+
+	r := Analyze(obs, ring())
+
+	seen := map[Code]int{}
+	for _, f := range r.Findings {
+		seen[f.Code]++
+	}
+	for code, n := range seen {
+		if n > 1 {
+			t.Errorf("%s reported %d times, want once: %+v", code, n, r.Findings)
+		}
+	}
+	if !r.Has(CodeJSOnly) {
+		t.Fatalf("expected the script-built widget to be reported: %+v", r.Findings)
+	}
+	// The more specific wording is the one worth keeping.
+	if got := finding(t, r, CodeJSOnly).Detail; !strings.Contains(got, "WEBRING_LEFT") {
+		t.Errorf("detail = %q, want the marker names", got)
+	}
+}

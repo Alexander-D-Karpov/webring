@@ -299,7 +299,17 @@ func (a *analysis) add(code Code, detail string) {
 	a.addCost(code, detail, penalties[code])
 }
 
+// addCost records a problem, at most once. Several checks can notice the same fault from
+// different angles — a page that builds its widget in script fails both the marker check
+// and the scripts-off render — and a reader deserves one explanation, charged once,
+// rather than the same complaint twice at double the cost. The first wording wins because
+// checks run from the most specific to the most general.
 func (a *analysis) addCost(code Code, detail string, cost int) {
+	for _, existing := range a.report.Findings {
+		if existing.Code == code {
+			return
+		}
+	}
 	a.report.Findings = append(a.report.Findings, Finding{
 		Code:     code,
 		Severity: code.Severity(),

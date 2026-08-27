@@ -394,3 +394,51 @@ func TestVisitRetriesAConnectionThatDropsOnce(t *testing.T) {
 		t.Errorf("the page was fetched %d times, want a retry", attempts)
 	}
 }
+
+// A fresh tab sits on about:blank with a readyState of "complete", and navigate returns
+// as soon as the navigation is initiated. Waiting on readyState alone can therefore be
+// satisfied by the blank page the browser was already showing, handing the collector an
+// empty document and turning a working site into a false finding.
+func TestVisitWaitsForTheRequestedDocument(t *testing.T) {
+	browser := testBrowser(t)
+
+	// A server that stalls before answering widens the window in which a premature wait
+	// would observe the blank page instead of this one.
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(700 * time.Millisecond)
+		w.Header().Set("Content-Type", "text/html")
+		if _, err := io.WriteString(w, `<html><body><p>arrived at last</p>
+			<a href="https://otor.ing/mine/next">next</a>
+			<a href="https://otor.ing/mine/prev">prev</a></body></html>`); err != nil {
+			t.Errorf("writing response: %v", err)
+		}
+	}))
+	t.Cleanup(slow.Close)
+
+	obs := visit(t, browser, slow.URL)
+
+	if !obs.Rendered {
+		t.Fatalf("slow page did not render: %s", obs.RenderError)
+	}
+	if len(obs.Links) != 2 {
+		t.Errorf("collected %d links, want both: %v", len(obs.Links), hrefs(obs))
+	}
+	// The scripts-off pass has to wait for the same document.
+	if len(obs.NoScriptHrefs) != 2 {
+		t.Errorf("scripts-off pass saw %v, want both links", obs.NoScriptHrefs)
+	}
+}
+
+// Concluding "nothing survives without scripts" from a page that never loaded would be an
+// accusation drawn from a blank screen.
+func TestNoScriptPassDrawsNoConclusionFromAnEmptyDocument(t *testing.T) {
+	browser := testBrowser(t)
+	url := servePage(t, `<html><body></body></html>`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	if got := browser.noScriptHrefs(ctx, url); got != nil {
+		t.Errorf("noScriptHrefs = %v, want nothing for an empty document", got)
+	}
+}

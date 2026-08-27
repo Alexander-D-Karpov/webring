@@ -395,7 +395,7 @@ func (b *Browser) noScriptHrefs(ctx context.Context, target string) []string {
 		chromedp.EmulateViewport(int64(Viewports[0].Width), int64(Viewports[0].Height)),
 		navigate(target),
 		waitForDOM(),
-		chromedp.Sleep(reflowDelay),
+		chromedp.Sleep(settleDelay),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			var encoded string
 			if evalErr := chromedp.Evaluate(collectScript, &encoded).Do(ctx); evalErr != nil {
@@ -406,6 +406,13 @@ func (b *Browser) noScriptHrefs(ctx context.Context, target string) []string {
 	)
 	if err != nil {
 		log.Printf("Ring integrity: could not load %s with scripts off: %v", target, err)
+		return nil
+	}
+
+	// A document that produced no text and almost no elements did not load; saying
+	// nothing survived would be an accusation drawn from a blank page.
+	if collected.BodyLength == 0 && collected.ElementCount < 2 {
+		log.Printf("Ring integrity: %s rendered empty with scripts off, drawing no conclusion", target)
 		return nil
 	}
 
@@ -484,13 +491,27 @@ func navigate(target string) chromedp.Action {
 	})
 }
 
-// waitForDOM blocks until the document is parsed and scripts have had a chance to run.
+// waitForDOM blocks until the requested document is parsed.
+//
+// It insists the tab has actually left about:blank first. A fresh tab starts there with a
+// readyState of "complete", and navigate returns as soon as the navigation is *initiated*,
+// so waiting on readyState alone can be satisfied by the blank page the browser was
+// already showing and hand the collector an empty document.
 func waitForDOM() chromedp.Action {
 	return chromedp.ActionFunc(func(ctx context.Context) error {
 		for {
-			var state string
-			if err := chromedp.Evaluate("document.readyState", &state).Do(ctx); err == nil {
-				if state == "interactive" || state == "complete" {
+			var encoded string
+			err := chromedp.Evaluate(
+				`JSON.stringify({ready: document.readyState, url: location.href})`,
+				&encoded).Do(ctx)
+			if err == nil {
+				var state struct {
+					Ready string `json:"ready"`
+					URL   string `json:"url"`
+				}
+				if decodeJSON(encoded, &state) == nil &&
+					state.URL != "" && state.URL != "about:blank" &&
+					(state.Ready == "interactive" || state.Ready == "complete") {
 					return nil
 				}
 			}

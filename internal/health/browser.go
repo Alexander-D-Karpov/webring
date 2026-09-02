@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
@@ -32,6 +33,8 @@ const (
 	followTimeout = 15 * time.Second
 	// retryDelay is the pause before a second attempt at a page whose connection dropped.
 	retryDelay = 3 * time.Second
+	// versionTimeout bounds the one question asked of Chromium before any site is loaded.
+	versionTimeout = 20 * time.Second
 )
 
 // chromeCandidates are the binary names to look for when CHROME_PATH is unset.
@@ -65,6 +68,10 @@ type Browser struct {
 	allocCtx context.Context
 	cancel   context.CancelFunc
 	http     *http.Client
+
+	// major is the version of this Chromium, borrowed by the identities the checker
+	// wears. See useragent.go for why it is read from the browser rather than written down.
+	major int
 }
 
 // NewBrowser starts Chromium. Call Close when finished.
@@ -78,21 +85,41 @@ func NewBrowser(ctx context.Context, execPath string) (*Browser, error) {
 		// Containers run this as root, where the sandbox refuses to start.
 		chromedp.NoSandbox,
 		chromedp.WindowSize(Viewports[0].Width, Viewports[0].Height),
-		chromedp.UserAgent(browserUserAgent),
 	)
 
 	allocCtx, cancel := chromedp.NewExecAllocator(ctx, opts...)
-	return &Browser{
+	b := &Browser{
 		allocCtx: allocCtx,
 		cancel:   cancel,
 		http:     &http.Client{Timeout: followTimeout},
-	}, nil
+	}
+	b.major = b.chromeMajor(ctx)
+	return b, nil
 }
 
-// browserUserAgent identifies the checker while still looking enough like a browser that
-// sites do not serve it a stripped-down page.
-const browserUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
-	"Chrome/120.0.0.0 Safari/537.36 webring-ring-check (+https://otor.ing)"
+// chromeMajor asks Chromium what version it is, so the identities the checker wears stay
+// current on their own. Nothing here reaches the network, and a failure only costs the
+// disguise some realism, so it is logged and shrugged off.
+func (b *Browser) chromeMajor(ctx context.Context) int {
+	ctx, cancel := context.WithTimeout(ctx, versionTimeout)
+	defer cancel()
+
+	tabCtx, cancelTab := chromedp.NewContext(b.allocCtx)
+	defer cancelTab()
+	defer context.AfterFunc(ctx, cancelTab)()
+
+	var product string
+	err := chromedp.Run(tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+		_, p, _, _, _, versionErr := browser.GetVersion().Do(ctx)
+		product = p
+		return versionErr
+	}))
+	if err != nil {
+		log.Printf("Ring integrity: could not read the browser version: %v", err)
+		return 0
+	}
+	return chromeMajor(product)
+}
 
 func (b *Browser) Close() {
 	if b != nil && b.cancel != nil {
@@ -249,15 +276,21 @@ type rawPage struct {
 // the same sites load perfectly on the next sweep — and scoring a member zero because a
 // socket closed is worse than the second's delay. A timeout is not retried: the page was
 // reachable and genuinely slow, which is the finding.
+// One identity is drawn per site and used for every load of it: the four viewports, the
+// scripts-off pass, and the retry. A reader does not change browsers halfway through a
+// visit, and neither should the checker — a site that varied its markup by platform would
+// otherwise be compared against itself and reported for a difference it did not make.
 func (b *Browser) Visit(ctx context.Context, target string) PageObservation {
-	obs := b.visitOnce(ctx, target)
+	id := randomIdentity(b.major)
+
+	obs := b.visitOnce(ctx, target, id)
 	if obs.Rendered || !worthRetrying(obs.RenderError) {
 		return obs
 	}
 
 	log.Printf("Ring integrity: retrying %s after %q", target, obs.RenderError)
 	sleepCtx(ctx, retryDelay)
-	return b.visitOnce(ctx, target)
+	return b.visitOnce(ctx, target, id)
 }
 
 // transientErrors are the network failures that come and go between sweeps.
@@ -290,7 +323,7 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 // The page is navigated once, then resized and re-measured for each size. Reflowing beats
 // navigating again: it is faster and it compares the same page rather than several
 // possibly different responses.
-func (b *Browser) visitOnce(ctx context.Context, target string) PageObservation {
+func (b *Browser) visitOnce(ctx context.Context, target string, id identity) PageObservation {
 	tabCtx, cancelTab := chromedp.NewContext(b.allocCtx)
 	defer cancelTab()
 
@@ -306,6 +339,7 @@ func (b *Browser) visitOnce(ctx context.Context, target string) PageObservation 
 	var renderedAt time.Duration
 
 	actions := []chromedp.Action{
+		id.apply(),
 		chromedp.EmulateViewport(int64(Viewports[0].Width), int64(Viewports[0].Height)),
 		navigate(target),
 		waitForDOM(),
@@ -346,7 +380,7 @@ func (b *Browser) visitOnce(ctx context.Context, target string) PageObservation 
 		Rendered:      true,
 		FinalURL:      finalURL,
 		Links:         mergeViewports(pages),
-		NoScriptHrefs: b.noScriptHrefs(ctx, target),
+		NoScriptHrefs: b.noScriptHrefs(ctx, target, id),
 		TimeToRender:  renderedAt,
 		WidgetMarkers: first.Markers,
 	}
@@ -379,7 +413,7 @@ func collectInto(pages map[Viewport]rawPage, v Viewport) chromedp.Action {
 //
 // A failure here returns nothing and is treated as no evidence rather than as proof the
 // site needs scripts.
-func (b *Browser) noScriptHrefs(ctx context.Context, target string) []string {
+func (b *Browser) noScriptHrefs(ctx context.Context, target string, id identity) []string {
 	tabCtx, cancelTab := chromedp.NewContext(b.allocCtx)
 	defer cancelTab()
 
@@ -390,6 +424,7 @@ func (b *Browser) noScriptHrefs(ctx context.Context, target string) []string {
 
 	var collected rawPage
 	err := chromedp.Run(tabCtx,
+		id.apply(),
 		// Must be set before navigating, or the page's scripts have already run.
 		emulation.SetScriptExecutionDisabled(true),
 		chromedp.EmulateViewport(int64(Viewports[0].Width), int64(Viewports[0].Height)),
@@ -539,7 +574,7 @@ func (b *Browser) FollowRingLink(ctx context.Context, href string) NeighborCheck
 	if err != nil {
 		return NeighborCheck{Err: err.Error()}
 	}
-	req.Header.Set("User-Agent", browserUserAgent)
+	req.Header.Set("User-Agent", randomIdentity(b.major).UserAgent)
 
 	resp, err := b.http.Do(req)
 	if err != nil {

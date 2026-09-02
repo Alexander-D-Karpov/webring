@@ -438,7 +438,7 @@ func TestNoScriptPassDrawsNoConclusionFromAnEmptyDocument(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	if got := browser.noScriptHrefs(ctx, url); got != nil {
+	if got := browser.noScriptHrefs(ctx, url, randomIdentity(browser.major)); got != nil {
 		t.Errorf("noScriptHrefs = %v, want nothing for an empty document", got)
 	}
 }

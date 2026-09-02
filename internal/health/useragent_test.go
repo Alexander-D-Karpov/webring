@@ -306,3 +306,68 @@ func majorIn(ua string) string {
 	major, _, _ := strings.Cut(after, ".")
 	return major
 }
+
+// The disguise has to cover everything the browser fetches, not just the page.
+//
+// The browser-level flag that used to set a fixed User-Agent is gone, so the identity is
+// now applied per tab. If that override did not reach child frames and subresources, a
+// member could embed an iframe from their own server and read the real "HeadlessChrome"
+// string off it — which would give the checker away just as plainly as the old name did.
+func TestNothingLeaksTheRealBrowser(t *testing.T) {
+	browser := testBrowser(t)
+
+	var mu sync.Mutex
+	seen := map[string]string{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.URL.Path] = r.Header.Get("User-Agent")
+		mu.Unlock()
+
+		switch r.URL.Path {
+		case "/frame":
+			w.Header().Set("Content-Type", "text/html")
+			write(t, w, `<html><body><a href="/inframe">x</a></body></html>`)
+		case "/img.png":
+			w.Header().Set("Content-Type", "image/png")
+		case "/thing.js":
+			w.Header().Set("Content-Type", "application/javascript")
+			write(t, w, `fetch('/xhr');`)
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			write(t, w, `<html><body>
+			  <iframe src="/frame"></iframe>
+			  <img src="/img.png">
+			  <script src="/thing.js"></script>
+			  <a href="/next">n</a></body></html>`)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	visit(t, browser, server.URL)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// The page, its frame, its script and that script's fetch all have to have been asked
+	// for, or this proves nothing about them.
+	for _, path := range []string{"/", "/frame", "/thing.js", "/xhr"} {
+		if _, asked := seen[path]; !asked {
+			t.Errorf("%s was never requested, so it was not checked for a leak", path)
+		}
+	}
+
+	for path, ua := range seen {
+		if strings.Contains(ua, "Headless") {
+			t.Errorf("%s leaked the real browser: %q", path, ua)
+		}
+	}
+}
+
+// write fails the test rather than ignoring a short write.
+func write(t *testing.T, w http.ResponseWriter, body string) {
+	t.Helper()
+	if _, err := w.Write([]byte(body)); err != nil {
+		t.Errorf("writing response: %v", err)
+	}
+}

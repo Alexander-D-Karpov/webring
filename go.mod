@@ -20,6 +20,6 @@ require (
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
-	golang.org/x/net v0.50.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 )

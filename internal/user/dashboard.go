@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"webring/internal/approval"
+	"webring/internal/blacklist"
 	"webring/internal/models"
 	"webring/internal/requests"
 
@@ -168,8 +169,19 @@ func createSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		block, err := blacklist.Check(db, blacklist.UserSubjects(user), blacklist.SiteSubjects(slug, url))
+		if err != nil {
+			log.Printf("Error checking blacklist: %v", err)
+			http.Error(w, "Error creating request", http.StatusInternalServerError)
+			return
+		}
+		if block != nil {
+			renderDashboardWithError(w, r, db, user, block.Message(), http.StatusForbidden)
+			return
+		}
+
 		var existingID int
-		err := db.QueryRow("SELECT id FROM sites WHERE slug = $1", slug).Scan(&existingID)
+		err = db.QueryRow("SELECT id FROM sites WHERE slug = $1", slug).Scan(&existingID)
 		if err == nil {
 			renderDashboardWithError(w, r, db, user,
 				fmt.Sprintf("Slug '%s' is already in use. Please choose a different slug.", slug),
@@ -264,6 +276,20 @@ func updateSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 		`, siteID).Scan(&currentSite.Slug, &currentSite.Name, &currentSite.URL)
 		if err != nil {
 			http.Error(w, "Error fetching site", http.StatusInternalServerError)
+			return
+		}
+
+		// Only cooldowns apply here: a blacklist entry blocks new submissions, not
+		// edits to a site that is already a member.
+		block, err := blacklist.CheckCooldown(db, blacklist.UserSubjects(user),
+			blacklist.SiteSubjects(currentSite.Slug, currentSite.URL))
+		if err != nil {
+			log.Printf("Error checking cooldowns: %v", err)
+			http.Error(w, "Error creating request", http.StatusInternalServerError)
+			return
+		}
+		if block != nil {
+			renderDashboardWithError(w, r, db, user, block.Message(), http.StatusForbidden)
 			return
 		}
 

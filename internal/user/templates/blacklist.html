@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blacklist - Webring</title>
+    <link rel="stylesheet" href="/static/dashboard.css">
+    <link rel="preconnect" href="https://rsms.me/">
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css">
+</head>
+<body>
+<header class="admin-header">
+    <div class="header-content">
+        <div class="header-left">
+            <a href="/admin" class="logo-link">
+                <div class="logo">
+                    <i class="ri-bubble-chart-fill"></i>
+                    <span class="logo-text">Webring</span>
+                </div>
+            </a>
+            <div class="page-info">
+                <h1>Blacklist</h1>
+            </div>
+        </div>
+        <div class="header-right">
+            <nav class="header-nav">
+                <a href="/admin" class="nav-item">
+                    <i class="ri-settings-line"></i>
+                    <span>Sites</span>
+                </a>
+                <a href="/admin/requests" class="nav-item">
+                    <i class="ri-shield-user-line"></i>
+                    <span>Requests</span>
+                </a>
+                <a href="/admin/users" class="nav-item">
+                    <i class="ri-user-settings-line"></i>
+                    <span>Users</span>
+                </a>
+                <a href="/admin/blacklist" class="nav-item active">
+                    <i class="ri-forbid-2-line"></i>
+                    <span>Blacklist</span>
+                </a>
+                <div class="nav-divider"></div>
+                <a href="/" class="nav-item secondary">
+                    <i class="ri-global-line"></i>
+                    <span>Public</span>
+                </a>
+                <a href="/api/docs/" class="nav-item secondary">
+                    <i class="ri-book-line"></i>
+                    <span>API</span>
+                </a>
+                <form action="/logout" method="POST" style="display: inline;">
+                    {{csrfField .Request}}
+                    <button type="submit" class="nav-item logout-btn">
+                        <i class="ri-logout-circle-line"></i>
+                        <span>Logout</span>
+                    </button>
+                </form>
+            </nav>
+        </div>
+    </div>
+</header>
+<main>
+    {{if .Error}}
+    <div class="error-banner">
+        <div class="error-banner-icon">
+            <i class="ri-error-warning-line"></i>
+        </div>
+        <div class="error-banner-content">
+            <span class="error-banner-text">{{.Error}}</span>
+        </div>
+    </div>
+    {{end}}
+
+    <div class="notice-card">
+        <div class="notice-icon">
+            <i class="ri-time-line"></i>
+        </div>
+        <div class="notice-content">
+            <div class="notice-title">Rejection cooldown: {{.CooldownWindow}}</div>
+            <div class="notice-text">
+                When a request is rejected, the submitter and the site it named are each blocked from new
+                requests for this long. Set REJECT_COOLDOWN (for example 24h5m) to change it.
+                Blacklist entries never expire and block new submissions only.
+            </div>
+        </div>
+    </div>
+
+    <div class="content-header">
+        <div class="content-title">
+            <h2>Blacklisted Users</h2>
+        </div>
+    </div>
+    <div class="table-wrapper">
+        <table>
+            <thead>
+            <tr>
+                <th class="col-slug">USER</th>
+                <th class="col-name">REASON</th>
+                <th class="col-telegram">ADDED BY</th>
+                <th class="col-status">ADDED</th>
+                <th class="col-actions">ACTIONS</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr class="row-add-new">
+                <td>
+                    <input type="text" name="subject_value" placeholder="username or #12" form="form-add-user" required>
+                </td>
+                <td>
+                    <input type="text" name="reason" placeholder="Reason (optional)" form="form-add-user">
+                </td>
+                <td></td>
+                <td>
+                    <span class="status-badge new">New</span>
+                </td>
+                <td>
+                    <div class="actions">
+                        <button type="submit" form="form-add-user" class="btn btn-primary btn-sm">
+                            <i class="ri-add-line"></i>
+                        </button>
+                    </div>
+                    <form action="/admin/blacklist/add" method="POST" style="display: none" id="form-add-user">
+                        {{csrfField .Request}}
+                        <input type="hidden" name="subject_type" value="user">
+                    </form>
+                </td>
+            </tr>
+            {{range .Users}}
+            <tr class="row-site">
+                <td>{{.Subject}}</td>
+                <td>{{if .Reason}}{{.Reason}}{{else}}<span class="ping-empty">—</span>{{end}}</td>
+                <td>{{if .AddedBy}}{{.AddedBy}}{{else}}<span class="ping-empty">—</span>{{end}}</td>
+                <td>{{.CreatedAt.Format "Jan 2, 15:04"}}</td>
+                <td>
+                    <div class="actions">
+                        <form action="/admin/blacklist/{{.ID}}/remove" method="POST" style="display: inline;" onsubmit="return confirm('Remove this user from the blacklist?')">
+                            {{csrfField $.Request}}
+                            <button type="submit" class="btn btn-danger btn-sm">
+                                <i class="ri-delete-bin-line"></i>
+                            </button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="content-header" style="margin-top: 3rem;">
+        <div class="content-title">
+            <h2>Blacklisted Sites</h2>
+        </div>
+    </div>
+    <div class="table-wrapper">
+        <table>
+            <thead>
+            <tr>
+                <th class="col-slug">SLUG OR DOMAIN</th>
+                <th class="col-name">REASON</th>
+                <th class="col-telegram">ADDED BY</th>
+                <th class="col-status">ADDED</th>
+                <th class="col-actions">ACTIONS</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr class="row-add-new">
+                <td>
+                    <input type="text" name="subject_value" placeholder="my-site or example.com" form="form-add-site" required>
+                </td>
+                <td>
+                    <input type="text" name="reason" placeholder="Reason (optional)" form="form-add-site">
+                </td>
+                <td></td>
+                <td>
+                    <span class="status-badge new">New</span>
+                </td>
+                <td>
+                    <div class="actions">
+                        <button type="submit" form="form-add-site" class="btn btn-primary btn-sm">
+                            <i class="ri-add-line"></i>
+                        </button>
+                    </div>
+                    <form action="/admin/blacklist/add" method="POST" style="display: none" id="form-add-site">
+                        {{csrfField .Request}}
+                        <input type="hidden" name="subject_type" value="site">
+                    </form>
+                </td>
+            </tr>
+            {{range .Sites}}
+            <tr class="row-site">
+                <td>{{.Subject}}</td>
+                <td>{{if .Reason}}{{.Reason}}{{else}}<span class="ping-empty">—</span>{{end}}</td>
+                <td>{{if .AddedBy}}{{.AddedBy}}{{else}}<span class="ping-empty">—</span>{{end}}</td>
+                <td>{{.CreatedAt.Format "Jan 2, 15:04"}}</td>
+                <td>
+                    <div class="actions">
+                        <form action="/admin/blacklist/{{.ID}}/remove" method="POST" style="display: inline;" onsubmit="return confirm('Remove this site from the blacklist?')">
+                            {{csrfField $.Request}}
+                            <button type="submit" class="btn btn-danger btn-sm">
+                                <i class="ri-delete-bin-line"></i>
+                            </button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="content-header" style="margin-top: 3rem;">
+        <div class="content-title">
+            <h2>Active Cooldowns</h2>
+        </div>
+    </div>
+    {{if .Cooldowns}}
+    <div class="table-wrapper">
+        <table>
+            <thead>
+            <tr>
+                <th class="col-status">TYPE</th>
+                <th class="col-slug">SUBJECT</th>
+                <th class="col-name">REASON</th>
+                <th class="col-telegram">EXPIRES</th>
+                <th class="col-ping">LEFT</th>
+                <th class="col-actions">ACTIONS</th>
+            </tr>
+            </thead>
+            <tbody>
+            {{range .Cooldowns}}
+            <tr class="row-site">
+                <td>
+                    {{if eq .SubjectType "user"}}
+                    <span class="type-badge update">
+                        <i class="ri-user-line"></i>
+                        User
+                    </span>
+                    {{else}}
+                    <span class="type-badge create">
+                        <i class="ri-global-line"></i>
+                        Site
+                    </span>
+                    {{end}}
+                </td>
+                <td>{{.Subject}}</td>
+                <td>{{if .Reason}}{{.Reason}}{{else}}<span class="ping-empty">—</span>{{end}}</td>
+                <td>{{.ExpiresAt.Format "Jan 2, 15:04"}}</td>
+                <td class="ping-cell"><span class="ping-value">{{.Remaining}}</span></td>
+                <td>
+                    <div class="actions">
+                        <form action="/admin/blacklist/cooldowns/{{.ID}}/remove" method="POST" style="display: inline;">
+                            {{csrfField $.Request}}
+                            <button type="submit" class="btn btn-success btn-sm" title="Lift this cooldown">
+                                <i class="ri-timer-flash-line"></i>
+                            </button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{else}}
+    <div class="empty-state">
+        <div class="empty-icon">
+            <i class="ri-timer-line"></i>
+        </div>
+        <div class="empty-title">No Active Cooldowns</div>
+        <div class="empty-description">Rejecting a request puts its submitter and site on cooldown for {{.CooldownWindow}}.</div>
+    </div>
+    {{end}}
+</main>
+</body>
+</html>

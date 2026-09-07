@@ -15,6 +15,7 @@ import (
 
 	"webring/internal/approval"
 	"webring/internal/auth"
+	"webring/internal/blacklist"
 	"webring/internal/models"
 	"webring/internal/requests"
 
@@ -116,6 +117,33 @@ func listSitesHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+func renderSubmitPage(w http.ResponseWriter, r *http.Request, errorMsg string, status int) {
+	templatesMu.RLock()
+	t := templates
+	templatesMu.RUnlock()
+
+	if t == nil {
+		http.Error(w, errorMsg, status)
+		return
+	}
+
+	data := struct {
+		Error   string
+		Request *http.Request
+	}{
+		Error:   errorMsg,
+		Request: r,
+	}
+
+	if status != http.StatusOK {
+		w.WriteHeader(status)
+	}
+	if err := t.ExecuteTemplate(w, "submit_site.html", data); err != nil {
+		log.Printf("Error rendering submit site template: %v", err)
+		http.Error(w, errorMsg, status)
+	}
+}
+
 func submitSitePageHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if os.Getenv("REQUIRE_LOGIN_FOR_SUBMIT") == "true" {
@@ -123,28 +151,7 @@ func submitSitePageHandler() http.HandlerFunc {
 			return
 		}
 
-		templatesMu.RLock()
-		t := templates
-		templatesMu.RUnlock()
-
-		if t == nil {
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
-
-		data := struct {
-			Error   string
-			Request *http.Request
-		}{
-			Error:   "",
-			Request: r,
-		}
-
-		if err := t.ExecuteTemplate(w, "submit_site.html", data); err != nil {
-			log.Printf("Error rendering submit site template: %v", err)
-			http.Error(w, "Error rendering template", http.StatusInternalServerError)
-			return
-		}
+		renderSubmitPage(w, r, "", http.StatusOK)
 	}
 }
 
@@ -198,31 +205,41 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		var existingID int
-		err := db.QueryRow("SELECT id FROM sites WHERE slug = $1", slug).Scan(&existingID)
-		if err == nil {
-			templatesMu.RLock()
-			t := templates
-			templatesMu.RUnlock()
-
-			if t == nil {
-				http.Error(w, fmt.Sprintf("Slug '%s' is already in use", slug), http.StatusConflict)
+		telegramUsernameClean := ""
+		if telegramUsername != "" {
+			telegramUsernameClean = strings.ToLower(strings.TrimPrefix(telegramUsername, "@"))
+			if matched, matchErr := regexp.MatchString("^[a-zA-Z0-9_]{4,32}$", telegramUsernameClean); !matched {
+				if matchErr != nil {
+					log.Printf("Error validating telegram username: %v", matchErr)
+				} else {
+					log.Println("Invalid Telegram username format")
+				}
+				http.Error(w, "Invalid Telegram username format", http.StatusBadRequest)
 				return
 			}
+		}
 
-			data := struct {
-				Error   string
-				Request *http.Request
-			}{
-				Error:   fmt.Sprintf("The slug '%s' is already in use. Please choose a different slug and try again.", slug),
-				Request: r,
-			}
+		// Checked before the user row is touched, so a blocked submitter does not get
+		// an account created for them on the way to being refused.
+		block, err := blacklist.Check(db,
+			blacklist.UsernameSubjects(telegramUsernameClean),
+			blacklist.SiteSubjects(slug, url))
+		if err != nil {
+			log.Printf("Error checking blacklist: %v", err)
+			http.Error(w, "Error processing submission", http.StatusInternalServerError)
+			return
+		}
+		if block != nil {
+			renderSubmitPage(w, r, block.Message(), http.StatusForbidden)
+			return
+		}
 
-			w.WriteHeader(http.StatusConflict)
-			if err = t.ExecuteTemplate(w, "submit_site.html", data); err != nil {
-				log.Printf("Error rendering submit site template: %v", err)
-				http.Error(w, fmt.Sprintf("Slug '%s' is already in use", slug), http.StatusConflict)
-			}
+		var existingID int
+		err = db.QueryRow("SELECT id FROM sites WHERE slug = $1", slug).Scan(&existingID)
+		if err == nil {
+			renderSubmitPage(w, r,
+				fmt.Sprintf("The slug '%s' is already in use. Please choose a different slug and try again.", slug),
+				http.StatusConflict)
 			return
 		}
 		if err != sql.ErrNoRows {
@@ -234,18 +251,7 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 		var userID *int
 		var submittingUser *models.User
 
-		if telegramUsername != "" {
-			telegramUsernameClean := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(telegramUsername), "@"))
-			if matched, matchErr := regexp.MatchString("^[a-zA-Z0-9_]{4,32}$", telegramUsernameClean); !matched {
-				if matchErr != nil {
-					log.Printf("Error validating telegram username: %v", matchErr)
-				} else {
-					log.Println("Invalid Telegram username format")
-				}
-				http.Error(w, "Invalid Telegram username format", http.StatusBadRequest)
-				return
-			}
-
+		if telegramUsernameClean != "" {
 			userID, err = findOrCreateUserByTelegramUsername(db, telegramUsernameClean)
 			if err != nil {
 				log.Printf("Error handling telegram username: %v", err)
@@ -291,8 +297,8 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 				submittingUser = &models.User{
 					ID: requestUserID,
 					TelegramUsername: func() *string {
-						if telegramUsername != "" {
-							clean := strings.ToLower(strings.TrimPrefix(telegramUsername, "@"))
+						if telegramUsernameClean != "" {
+							clean := telegramUsernameClean
 							return &clean
 						}
 						return nil

@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 
+	"webring/internal/blacklist"
 	"webring/internal/favicon"
 	"webring/internal/models"
 	"webring/internal/telegram"
@@ -133,10 +134,16 @@ func Approve(db *sql.DB, req *models.UpdateRequest) error {
 	return nil
 }
 
-// Decline removes a request and notifies the submitter.
+// Decline removes a request and notifies the submitter. It also starts the rejection
+// cooldown here rather than in the dashboard handler, so a request declined by
+// Telegram vote is treated exactly the same as one declined by an admin click.
 func Decline(db *sql.DB, req *models.UpdateRequest) error {
 	if err := Delete(db, req.ID); err != nil {
 		return err
+	}
+
+	if err := blacklist.RecordRejection(db, req); err != nil {
+		log.Printf("Error recording rejection cooldown for request %d: %v", req.ID, err)
 	}
 
 	go telegram.NotifyUserOfDeclinedRequest(req, req.User)

@@ -20,6 +20,7 @@ import (
 	"webring/internal/api"
 	"webring/internal/approval"
 	"webring/internal/auth"
+	"webring/internal/blacklist"
 	"webring/internal/dashboard"
 	"webring/internal/database"
 	"webring/internal/public"
@@ -131,6 +132,7 @@ func startBackgroundServices(db *sql.DB) {
 		defer ticker.Stop()
 		for range ticker.C {
 			auth.CleanExpiredSessions(db)
+			blacklist.PurgeExpired(db)
 		}
 	}()
 
@@ -159,6 +161,7 @@ func startApprovalListener(db *sql.DB) {
 func registerHandlers(r *mux.Router, db *sql.DB) {
 	dashboard.RegisterHandlers(r, db)
 	user.RegisterHandlers(r, db)
+	user.RegisterBlacklistHandlers(r, db)
 	public.RegisterSubmissionHandlers(r, db)
 	public.RegisterHealthHandlers(r, db)
 	api.RegisterSwaggerHandlers(r)

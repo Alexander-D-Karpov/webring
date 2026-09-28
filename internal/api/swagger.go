@@ -312,7 +312,9 @@ const swaggerJSON = `{
         },
         "favicon": {
           "type": "string",
-          "description": "Path to the site's favicon (nullable)"
+          "description": "Bare filename of the site's favicon stored on the server, or null if none could be fetched. This is NOT a ready-to-use URL: prepend the '/media/' path to load the image. For example, a value of 'favicon-3-a1b2c3d4.png' is served at 'https://webring.otomir23.me/media/favicon-3-a1b2c3d4.png'.",
+          "example": "favicon-3-a1b2c3d4.png",
+          "x-nullable": true
         }
       },
       "required": ["id", "slug", "name", "url"]

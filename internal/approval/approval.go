@@ -10,6 +10,7 @@ package approval
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log"
 
@@ -146,10 +147,19 @@ type Manager struct {
 	bot     Bot
 	decider Decider
 	chatID  int64
+	coin    func() bool
 }
 
 func NewManager(store Store, bot Bot, decider Decider, chatID int64) *Manager {
-	return &Manager{store: store, bot: bot, decider: decider, chatID: chatID}
+	return &Manager{store: store, bot: bot, decider: decider, chatID: chatID, coin: fairCoin}
+}
+
+func fairCoin() bool {
+	var b [1]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return false
+	}
+	return b[0]&1 == 1
 }
 
 // Enabled reports whether an admin group chat is configured. When it is not, requests
@@ -272,14 +282,51 @@ func (m *Manager) HandlePollAnswer(ctx context.Context, answer *telegram.PollAns
 		return fmt.Errorf("tallying poll %s: %w", poll.PollID, err)
 	}
 
+	return m.settle(ctx, poll, tally)
+}
+
+func (m *Manager) settle(ctx context.Context, poll *Poll, tally map[int]int) error {
+	approve, decline := tally[telegram.OptionApprove], tally[telegram.OptionDecline]
+
 	switch {
-	case tally[telegram.OptionApprove] >= poll.Threshold:
+	case approve >= poll.Threshold:
 		return m.decide(ctx, poll, StatusApproved, telegram.OptionApprove)
-	case tally[telegram.OptionDecline] >= poll.Threshold:
+	case decline >= poll.Threshold:
 		return m.decide(ctx, poll, StatusDeclined, telegram.OptionDecline)
+	case approve != decline || approve == 0:
+		return nil
 	}
 
-	return nil
+	adminCount, err := m.store.AdminCount(ctx)
+	if err != nil {
+		return fmt.Errorf("counting admins: %w", err)
+	}
+	if approve+decline < adminCount {
+		return nil
+	}
+
+	status, option := StatusDeclined, telegram.OptionDecline
+	if m.coin() {
+		status, option = StatusApproved, telegram.OptionApprove
+	}
+
+	log.Printf("Poll %s tied %d:%d with all %d admins voted; coin flip chose %s",
+		poll.PollID, approve, decline, adminCount, status)
+	m.announceTieBreak(ctx, poll, approve, status)
+
+	return m.decide(ctx, poll, status, option)
+}
+
+func (m *Manager) announceTieBreak(ctx context.Context, poll *Poll, votes int, status Status) {
+	text := telegram.EscapeMarkdownV2(fmt.Sprintf(
+		"Vote on request #%d is tied %d:%d and every admin has voted. Decided by coin flip: %s.",
+		poll.RequestID, votes, votes, status))
+
+	m.send(ctx, telegram.SendMessageParams{
+		ChatID:           poll.ChatID,
+		Text:             text,
+		ReplyToMessageID: poll.MessageID,
+	})
 }
 
 func (m *Manager) decide(ctx context.Context, poll *Poll, status Status, winningOption int) error {

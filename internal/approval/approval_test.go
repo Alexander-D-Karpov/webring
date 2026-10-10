@@ -116,6 +116,76 @@ func TestSplitVoteDoesNotDecide(t *testing.T) {
 	}
 }
 
+func TestTieWithEveryAdminVotedIsDecidedByCoin(t *testing.T) {
+	eightAdmins := append(append([]int64{}, sevenAdmins...), 108)
+
+	cases := []struct {
+		name         string
+		coin         bool
+		wantApproved int
+		wantDeclined int
+		wantStatus   Status
+		wantText     string
+	}{
+		{name: "heads approves", coin: true, wantApproved: 1, wantStatus: StatusApproved, wantText: "Approved by"},
+		{name: "tails declines", coin: false, wantDeclined: 1, wantStatus: StatusDeclined, wantText: "Declined by"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, eightAdmins)
+			h.manager.coin = func() bool { return tc.coin }
+
+			if h.poll.Threshold != 5 {
+				t.Fatalf("threshold = %d, want 5 for eight admins", h.poll.Threshold)
+			}
+
+			for _, tgID := range eightAdmins[:4] {
+				if err := h.vote(t, tgID, telegram.OptionApprove); err != nil {
+					t.Fatalf("vote: %v", err)
+				}
+			}
+			for _, tgID := range eightAdmins[4:7] {
+				if err := h.vote(t, tgID, telegram.OptionDecline); err != nil {
+					t.Fatalf("vote: %v", err)
+				}
+			}
+
+			if approved, declined := h.decider.counts(); approved != 0 || declined != 0 {
+				t.Fatalf("decided before the last admin voted: approved=%d declined=%d", approved, declined)
+			}
+
+			if err := h.vote(t, eightAdmins[7], telegram.OptionDecline); err != nil {
+				t.Fatalf("vote: %v", err)
+			}
+
+			approved, declined := h.decider.counts()
+			if approved != tc.wantApproved || declined != tc.wantDeclined {
+				t.Errorf("approved=%d declined=%d, want %d and %d",
+					approved, declined, tc.wantApproved, tc.wantDeclined)
+			}
+			if got := h.status(t); got != tc.wantStatus {
+				t.Errorf("poll status = %q, want %q", got, tc.wantStatus)
+			}
+			if got := h.bot.stopCount(); got != 1 {
+				t.Errorf("StopPoll called %d times, want 1", got)
+			}
+
+			var sawCoin, sawResult bool
+			for _, text := range h.bot.sentTexts() {
+				sawCoin = sawCoin || strings.Contains(text, "coin flip")
+				sawResult = sawResult || strings.Contains(text, tc.wantText)
+			}
+			if !sawCoin {
+				t.Errorf("the group was not told the tie was broken by coin flip: %q", h.bot.sentTexts())
+			}
+			if !sawResult {
+				t.Errorf("no %q announcement was sent: %q", tc.wantText, h.bot.sentTexts())
+			}
+		})
+	}
+}
+
 func TestNonAdminVotesAreIgnored(t *testing.T) {
 	h := newHarness(t, sevenAdmins)
 

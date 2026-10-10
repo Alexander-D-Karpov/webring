@@ -286,17 +286,48 @@ func (m *Manager) HandlePollAnswer(ctx context.Context, answer *telegram.PollAns
 		return fmt.Errorf("tallying poll %s: %w", poll.PollID, err)
 	}
 
-	switch {
-	case tally[telegram.OptionApprove] >= poll.Threshold:
-		return m.decide(ctx, poll, StatusApproved, telegram.OptionApprove)
-	case tally[telegram.OptionDecline] >= poll.Threshold:
-		return m.decide(ctx, poll, StatusDeclined, telegram.OptionDecline)
-	}
-
-	return nil
+	return m.settle(ctx, poll, tally)
 }
 
-func (m *Manager) decide(ctx context.Context, poll *Poll, status Status, winningOption int) error {
+func (m *Manager) settle(ctx context.Context, poll *Poll, tally map[int]int) error {
+	approve, decline := tally[telegram.OptionApprove], tally[telegram.OptionDecline]
+
+	switch {
+	case approve >= poll.Threshold:
+		return m.decide(ctx, poll, StatusApproved, telegram.OptionApprove, false)
+	case decline >= poll.Threshold:
+		return m.decide(ctx, poll, StatusDeclined, telegram.OptionDecline, false)
+	case approve != decline || approve == 0:
+		return nil
+	}
+
+	adminCount, err := m.store.AdminCount(ctx)
+	if err != nil {
+		return fmt.Errorf("counting admins: %w", err)
+	}
+	if approve+decline < adminCount {
+		return nil
+	}
+
+	log.Printf("Poll %s tied %d:%d with all %d admins voted; approving by default",
+		poll.PollID, approve, decline, adminCount)
+
+	return m.decide(ctx, poll, StatusApproved, telegram.OptionApprove, true)
+}
+
+func (m *Manager) announceTieBreak(ctx context.Context, poll *Poll) {
+	text := telegram.EscapeMarkdownV2(fmt.Sprintf(
+		"Vote on request #%d is tied and every admin has voted. A tie approves the request by default.",
+		poll.RequestID))
+
+	m.send(ctx, telegram.SendMessageParams{
+		ChatID:           poll.ChatID,
+		Text:             text,
+		ReplyToMessageID: poll.MessageID,
+	})
+}
+
+func (m *Manager) decide(ctx context.Context, poll *Poll, status Status, winningOption int, tieBreak bool) error {
 	req, err := m.decider.Load(poll.RequestID)
 	if err != nil {
 		return fmt.Errorf("loading request %d: %w", poll.RequestID, err)
@@ -322,6 +353,10 @@ func (m *Manager) decide(ctx context.Context, poll *Poll, status Status, winning
 
 	// Stop taking votes as soon as the outcome is locked in.
 	m.ClosePoll(ctx, poll)
+
+	if tieBreak {
+		m.announceTieBreak(ctx, poll)
+	}
 
 	if status == StatusApproved {
 		err = m.decider.Approve(req)

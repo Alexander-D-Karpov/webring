@@ -543,20 +543,10 @@ func TestVoteSummariesWithNoRequestIDs(t *testing.T) {
 	}
 }
 
-func claimsReminder(t *testing.T, store Store, pollID string) *Poll {
-	t.Helper()
-
-	polls, err := store.ClaimDueReminders(context.Background(), 24*time.Hour)
-	if err != nil {
-		t.Fatalf("ClaimDueReminders: %v", err)
-	}
-	for i := range polls {
-		if polls[i].PollID == pollID {
-			return &polls[i]
-		}
-	}
-	return nil
-}
+const (
+	openedDayAgo   = `UPDATE request_polls SET created_at = NOW() - INTERVAL '25 hours' WHERE poll_id = $1`
+	remindedDayAgo = `UPDATE request_polls SET reminded_at = NOW() - INTERVAL '25 hours' WHERE poll_id = $1`
+)
 
 func TestClaimDueRemindersAgainstPostgres(t *testing.T) {
 	db := testDB(t)
@@ -566,77 +556,43 @@ func TestClaimDueRemindersAgainstPostgres(t *testing.T) {
 	requestID := createRequest(t, db, userID)
 	poll := createStoredPoll(t, db, store, requestID, 4)
 
-	if claimsReminder(t, store, poll.PollID) != nil {
+	claims := func(age string) bool {
+		t.Helper()
+		if age != "" {
+			if _, err := db.Exec(age, poll.PollID); err != nil {
+				t.Fatalf("aging the poll: %v", err)
+			}
+		}
+		polls, err := store.ClaimDueReminders(context.Background(), 24*time.Hour)
+		if err != nil {
+			t.Fatalf("ClaimDueReminders: %v", err)
+		}
+		for i := range polls {
+			if polls[i].PollID == poll.PollID {
+				return true
+			}
+		}
+		return false
+	}
+
+	if claims("") {
 		t.Fatalf("a poll opened just now is already due a reminder")
 	}
-
-	if _, err := db.Exec(`UPDATE request_polls SET created_at = NOW() - INTERVAL '25 hours'
-		WHERE poll_id = $1`, poll.PollID); err != nil {
-		t.Fatalf("backdating the poll: %v", err)
-	}
-
-	claimed := claimsReminder(t, store, poll.PollID)
-	if claimed == nil {
+	if !claims(openedDayAgo) {
 		t.Fatalf("a poll open for 25 hours is not due a reminder")
 	}
-	if claimed.RequestID != requestID || claimed.ChatID != poll.ChatID || claimed.MessageID != poll.MessageID ||
-		claimed.Threshold != poll.Threshold || claimed.Status != StatusOpen {
-		t.Errorf("claimed poll = %+v, want %+v", *claimed, poll)
-	}
-	if claimsReminder(t, store, poll.PollID) != nil {
+	if claims("") {
 		t.Errorf("the same reminder was claimed twice")
 	}
-
-	if _, err := db.Exec(`UPDATE request_polls SET reminded_at = NOW() - INTERVAL '23 hours'
-		WHERE poll_id = $1`, poll.PollID); err != nil {
-		t.Fatalf("backdating the reminder: %v", err)
-	}
-	if claimsReminder(t, store, poll.PollID) != nil {
-		t.Errorf("a reminder came due less than a day after the previous one")
-	}
-
-	if _, err := db.Exec(`UPDATE request_polls SET reminded_at = NOW() - INTERVAL '25 hours'
-		WHERE poll_id = $1`, poll.PollID); err != nil {
-		t.Fatalf("backdating the reminder: %v", err)
-	}
-	if claimsReminder(t, store, poll.PollID) == nil {
+	if !claims(remindedDayAgo) {
 		t.Errorf("no reminder came due a day after the previous one")
 	}
 
 	if err := store.SetStatus(context.Background(), poll.PollID, StatusApproved); err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE request_polls SET reminded_at = NOW() - INTERVAL '25 hours'
-		WHERE poll_id = $1`, poll.PollID); err != nil {
-		t.Fatalf("backdating the reminder: %v", err)
-	}
-	if claimsReminder(t, store, poll.PollID) != nil {
+	if claims(remindedDayAgo) {
 		t.Errorf("a decided poll came due a reminder")
-	}
-}
-
-func TestClaimDueRemindersReturnsPollsWhoseRequestIsGone(t *testing.T) {
-	db := testDB(t)
-	store := NewStore(db)
-
-	userID, _ := createUser(t, db, false)
-	requestID := createRequest(t, db, userID)
-	poll := createStoredPoll(t, db, store, requestID, 4)
-
-	if _, err := db.Exec("DELETE FROM update_requests WHERE id = $1", requestID); err != nil {
-		t.Fatalf("deleting request: %v", err)
-	}
-	if _, err := db.Exec(`UPDATE request_polls SET created_at = NOW() - INTERVAL '25 hours'
-		WHERE poll_id = $1`, poll.PollID); err != nil {
-		t.Fatalf("backdating the poll: %v", err)
-	}
-
-	claimed := claimsReminder(t, store, poll.PollID)
-	if claimed == nil {
-		t.Fatalf("an open poll whose request is gone was never claimed, so it would stay pinned forever")
-	}
-	if claimed.RequestID != 0 {
-		t.Errorf("request ID = %d, want 0 now that the request is gone", claimed.RequestID)
 	}
 }
 

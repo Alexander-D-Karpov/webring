@@ -49,7 +49,6 @@ type fakeStore struct {
 	claimAttempts int
 	failClaim     bool
 	tallyErr      error
-	createErr     error
 }
 
 func newFakeStore(adminTelegramIDs ...int64) *fakeStore {
@@ -120,9 +119,6 @@ func (f *fakeStore) orphan(pollID string) {
 func (f *fakeStore) CreatePoll(_ context.Context, poll Poll) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.createErr != nil {
-		return f.createErr
-	}
 	stored := poll
 	f.polls[poll.PollID] = &stored
 	f.createdAt[poll.PollID] = f.now

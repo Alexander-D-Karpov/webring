@@ -97,12 +97,14 @@ func TestReminderPingsOnlyAdminsWhoHaveNotVoted(t *testing.T) {
 }
 
 func TestReminderWhenEveryoneHasVotedWithoutAMajority(t *testing.T) {
-	admins := sevenAdmins[:6]
-	h := newHarness(t, admins)
+	eightAdmins := append(append([]int64{}, sevenAdmins...), 108)
+	h := newHarness(t, eightAdmins)
+	h.store.demote(eightAdmins[6])
+	h.store.demote(eightAdmins[7])
 
-	for i, tgID := range admins {
+	for i, tgID := range eightAdmins[:6] {
 		option := telegram.OptionApprove
-		if i%2 == 1 {
+		if i >= 4 {
 			option = telegram.OptionDecline
 		}
 		if err := h.vote(t, tgID, option); err != nil {
@@ -113,12 +115,53 @@ func TestReminderWhenEveryoneHasVotedWithoutAMajority(t *testing.T) {
 	h.store.advance(day)
 	h.remind(t)
 
+	if approved, declined := h.decider.counts(); approved != 0 || declined != 0 {
+		t.Fatalf("4:2 against a frozen threshold of 5 was decided: approved=%d declined=%d", approved, declined)
+	}
+
 	got := reminderMessages(h.bot)
 	if len(got) != 1 {
 		t.Fatalf("a deadlocked vote got %d reminders, want 1", len(got))
 	}
 	if strings.Contains(got[0].Text, "tg://user") || !strings.Contains(got[0].Text, "Everyone has voted") {
 		t.Errorf("a deadlocked vote should be reported without pings:\n%s", got[0].Text)
+	}
+	if got := h.status(t); got != StatusOpen {
+		t.Errorf("poll status = %q, want %q", got, StatusOpen)
+	}
+}
+
+func TestReminderApprovesATieLeftByADemotion(t *testing.T) {
+	eightAdmins := append(append([]int64{}, sevenAdmins...), 108)
+	h := newHarness(t, eightAdmins)
+
+	for i, tgID := range eightAdmins[:7] {
+		option := telegram.OptionApprove
+		if i >= 4 {
+			option = telegram.OptionDecline
+		}
+		if err := h.vote(t, tgID, option); err != nil {
+			t.Fatalf("vote: %v", err)
+		}
+	}
+
+	h.store.demote(eightAdmins[0])
+	h.store.demote(eightAdmins[7])
+
+	h.store.advance(day)
+	h.remind(t)
+
+	if approved, declined := h.decider.counts(); approved != 1 || declined != 0 {
+		t.Errorf("approved=%d declined=%d, want the 3:3 tie to approve", approved, declined)
+	}
+	if got := h.status(t); got != StatusApproved {
+		t.Errorf("poll status = %q, want %q", got, StatusApproved)
+	}
+	if got := reminderMessages(h.bot); len(got) != 0 {
+		t.Errorf("sent %d reminders for a tie the reminder itself resolved", len(got))
+	}
+	if unpins := h.bot.unpinned(); len(unpins) != 1 {
+		t.Errorf("unpinned %d messages, want the decided poll", len(unpins))
 	}
 }
 

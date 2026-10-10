@@ -78,6 +78,10 @@ func (m *Manager) remind(ctx context.Context, poll *Poll) {
 		return
 	}
 
+	if len(pending) == 0 && m.settledByReminder(ctx, poll, tally) {
+		return
+	}
+
 	text := telegram.RenderMessage("poll_reminder", map[string]interface{}{
 		"RequestID": req.ID,
 		"SiteName":  telegram.RequestSiteName(req),
@@ -95,6 +99,20 @@ func (m *Manager) remind(ctx context.Context, poll *Poll) {
 		Text:             text,
 		ReplyToMessageID: poll.MessageID,
 	})
+}
+
+func (m *Manager) settledByReminder(ctx context.Context, poll *Poll, tally map[int]int) bool {
+	if err := m.settle(ctx, poll, tally); err != nil {
+		log.Printf("Error settling poll %s from a reminder: %v", poll.PollID, err)
+		return true
+	}
+
+	current, err := m.store.PollByID(ctx, poll.PollID)
+	if err != nil {
+		log.Printf("Error rereading poll %s after settling it: %v", poll.PollID, err)
+		return true
+	}
+	return current == nil || current.Status != StatusOpen
 }
 
 func (m *Manager) RunReminders(ctx context.Context, interval time.Duration) {

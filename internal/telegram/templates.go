@@ -157,7 +157,7 @@ var defaults = map[string]string{
 	"site_offline":          "*Site Status: Offline*\n\nYour site *{{.SiteName}}* is currently not responding after {{.DownThreshold}} consecutive checks. Please check your server.",
 	"poll_approved":         "*Request Approved by Vote*\n\n*Site:* {{.SiteName}}\n*User:* {{.UserName}}\n{{- if .Voters}}\n\n*Approved by:*\n{{- range .Voters}}\n  • {{.}}\n{{- end}}\n{{- end}}",
 	"poll_declined":         "*Request Declined by Vote*\n\n*Site:* {{.SiteName}}\n*User:* {{.UserName}}\n{{- if .Voters}}\n\n*Declined by:*\n{{- range .Voters}}\n  • {{.}}\n{{- end}}\n{{- end}}",
-	"poll_reminder":         "*Not Enough Votes Yet*\n\n*Request:* #{{.RequestID}}\n*Site:* {{.SiteName}}\n*Approve:* {{.Approve}} of {{.Threshold}}\n*Decline:* {{.Decline}} of {{.Threshold}}\n{{- if .Pending}}\n\n*Not voted yet:*\n{{- range .Pending}}\n  • {{.}}\n{{- end}}\n{{- else}}\n\nEveryone has voted, but no option has a majority. Decide it from the dashboard.\n{{- end}}",
+	"poll_reminder":         "*Not Enough Votes Yet*: request #{{.RequestID}}, {{.SiteName}}\n*Approve:* {{.Approve}} of {{.Threshold}}, *Decline:* {{.Decline}} of {{.Threshold}}\n{{if .Pending}}{{range .Pending}}{{.}} {{end}}{{else}}Everyone has voted and nobody reached the threshold. Decide it from the dashboard.{{end}}",
 }
 
 func mustParseFallback(name, fallback string) *template.Template {

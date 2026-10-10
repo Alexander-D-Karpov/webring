@@ -97,25 +97,14 @@ func (m *Manager) remind(ctx context.Context, poll *Poll) {
 	})
 }
 
-type Reminder struct {
-	manager  *Manager
-	interval time.Duration
-
-	wait func(ctx context.Context, d time.Duration)
-}
-
-func NewReminder(manager *Manager, interval time.Duration) *Reminder {
-	return &Reminder{manager: manager, interval: interval, wait: sleepCtx}
-}
-
-func (r *Reminder) Run(ctx context.Context) {
-	log.Printf("Telegram poll reminders started, every %s", r.interval)
+func (m *Manager) RunReminders(ctx context.Context, interval time.Duration) {
+	log.Printf("Telegram poll reminders started, every %s", interval)
 
 	for ctx.Err() == nil {
-		if err := r.manager.SendReminders(ctx, r.interval); err != nil {
+		if err := m.SendReminders(ctx, interval); err != nil {
 			log.Printf("Error sending poll reminders: %v", err)
 		}
-		r.wait(ctx, reminderCheckInterval)
+		sleepCtx(ctx, reminderCheckInterval)
 	}
 
 	log.Printf("Telegram poll reminders stopped")

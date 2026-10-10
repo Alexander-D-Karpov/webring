@@ -67,6 +67,7 @@ Available templates:
 | `site_offline.txt`          | Owner notification: site went offline       |
 | `poll_approved.txt`         | Request approved by admin vote              |
 | `poll_declined.txt`         | Request declined by admin vote              |
+| `poll_reminder.txt`         | Vote still open: pings admins yet to vote   |
 
 ## Telegram Approval Polls
 
@@ -81,18 +82,27 @@ the previous behavior, where requests are decided from the dashboard only.
 Setup:
 
 1. Create a group, add the bot to it, and add every admin.
-2. Find the group's chat ID (it is negative) and put it in `TELEGRAM_ADMIN_CHAT_ID`.
-3. Make sure each admin has a `telegram_id` in the `users` table. Admins without one
-   cannot vote and still count towards the majority.
+2. Make the bot an admin of the group with the right to pin messages.
+3. Find the group's chat ID (it is negative) and put it in `TELEGRAM_ADMIN_CHAT_ID`.
+4. Make sure each admin has a `telegram_id` in the `users` table. Admins without one
+   cannot vote and are left out of the majority.
 
 The threshold is a simple majority of admins who can vote — four out of seven — and is
 fixed when the poll is created, so promoting an admin mid-vote does not change it. Only
 votes from users flagged `is_admin` are counted; everyone else in the group is ignored.
 The dashboard's approve and reject buttons keep working and close any open poll.
+A tie with every admin voted approves the request.
 
 Each request on `/admin/requests` shows how its vote is going: the running count against
 the threshold, and who voted which way. Requests submitted before polls were enabled
 simply show no vote block.
+
+New polls are pinned (the bot needs the pin right) and unpinned when the vote closes. An
+open poll gets a daily reminder pinging admins who have not voted; `POLL_REMINDER_INTERVAL`
+changes the period (Go duration, minimum `5m`, default `24h`).
+If everyone has voted and nobody reached the threshold, which only happens after admins are
+demoted mid-vote since the threshold is frozen, a tie is approved and anything else gets a
+reminder asking for a dashboard decision.
 
 Votes are read with `getUpdates` long polling, so the bot must not have a webhook set and
 only one instance may run with a given token. A `409 Conflict` in the logs means one of

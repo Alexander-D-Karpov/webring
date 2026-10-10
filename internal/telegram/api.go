@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -215,14 +216,38 @@ func (c *Client) SendPoll(ctx context.Context, params SendPollParams) (*SentPoll
 	return &SentPoll{PollID: msg.Poll.ID, MessageID: msg.MessageID, ChatID: chatID}, nil
 }
 
-type stopPollParams struct {
+type chatMessageParams struct {
 	ChatID    int64 `json:"chat_id"`
 	MessageID int64 `json:"message_id"`
 }
 
 // StopPoll closes a poll so Telegram stops accepting votes for it.
 func (c *Client) StopPoll(ctx context.Context, chatID, messageID int64) error {
-	return c.call(ctx, "stopPoll", stopPollParams{ChatID: chatID, MessageID: messageID}, nil)
+	return c.call(ctx, "stopPoll", chatMessageParams{ChatID: chatID, MessageID: messageID}, nil)
+}
+
+type pinChatMessageParams struct {
+	ChatID              int64 `json:"chat_id"`
+	MessageID           int64 `json:"message_id"`
+	DisableNotification bool  `json:"disable_notification"`
+}
+
+func (c *Client) PinChatMessage(ctx context.Context, chatID, messageID int64) error {
+	return c.call(ctx, "pinChatMessage", pinChatMessageParams{
+		ChatID:              chatID,
+		MessageID:           messageID,
+		DisableNotification: false,
+	}, nil)
+}
+
+var errUnpinWithoutMessage = errors.New(
+	"unpinChatMessage needs a message ID: without one Telegram unpins the latest pinned message")
+
+func (c *Client) UnpinChatMessage(ctx context.Context, chatID, messageID int64) error {
+	if messageID == 0 {
+		return errUnpinWithoutMessage
+	}
+	return c.call(ctx, "unpinChatMessage", chatMessageParams{ChatID: chatID, MessageID: messageID}, nil)
 }
 
 type getUpdatesParams struct {

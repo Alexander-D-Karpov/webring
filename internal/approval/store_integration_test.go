@@ -543,6 +543,124 @@ func TestVoteSummariesWithNoRequestIDs(t *testing.T) {
 	}
 }
 
+const (
+	openedDayAgo   = `UPDATE request_polls SET created_at = NOW() - INTERVAL '25 hours' WHERE poll_id = $1`
+	remindedDayAgo = `UPDATE request_polls SET reminded_at = NOW() - INTERVAL '25 hours' WHERE poll_id = $1`
+)
+
+func TestClaimDueRemindersAgainstPostgres(t *testing.T) {
+	db := testDB(t)
+	store := NewStore(db)
+
+	userID, _ := createUser(t, db, false)
+	requestID := createRequest(t, db, userID)
+	poll := createStoredPoll(t, db, store, requestID, 4)
+
+	claims := func(age string) bool {
+		t.Helper()
+		if age != "" {
+			if _, err := db.Exec(age, poll.PollID); err != nil {
+				t.Fatalf("aging the poll: %v", err)
+			}
+		}
+		polls, err := store.ClaimDueReminders(context.Background(), 24*time.Hour)
+		if err != nil {
+			t.Fatalf("ClaimDueReminders: %v", err)
+		}
+		for i := range polls {
+			if polls[i].PollID == poll.PollID {
+				return true
+			}
+		}
+		return false
+	}
+
+	if claims("") {
+		t.Fatalf("a poll opened just now is already due a reminder")
+	}
+	if !claims(openedDayAgo) {
+		t.Fatalf("a poll open for 25 hours is not due a reminder")
+	}
+	if claims("") {
+		t.Errorf("the same reminder was claimed twice")
+	}
+	if !claims(remindedDayAgo) {
+		t.Errorf("no reminder came due a day after the previous one")
+	}
+
+	if err := store.SetStatus(context.Background(), poll.PollID, StatusApproved); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+	if claims(remindedDayAgo) {
+		t.Errorf("a decided poll came due a reminder")
+	}
+}
+
+func TestPendingVotersAgainstPostgres(t *testing.T) {
+	db := testDB(t)
+	store := NewStore(db)
+	ctx := context.Background()
+
+	voterID, voterTelegramID := createUser(t, db, true)
+	_, waitingTelegramID := createUser(t, db, true)
+	demotedID, demotedTelegramID := createUser(t, db, true)
+	_, outsiderTelegramID := createUser(t, db, false)
+
+	var unlinkedID int
+	unlinkedName := fmt.Sprintf("unlinked_%d", nextUnique())
+	if err := db.QueryRow(`
+		INSERT INTO users (telegram_username, first_name, is_admin)
+		VALUES ($1, $1, true) RETURNING id
+	`, unlinkedName).Scan(&unlinkedID); err != nil {
+		t.Fatalf("creating an admin without a Telegram ID: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := db.Exec("DELETE FROM users WHERE id = $1", unlinkedID); err != nil {
+			t.Errorf("cleaning up user %d: %v", unlinkedID, err)
+		}
+	})
+
+	requestID := createRequest(t, db, voterID)
+	poll := createStoredPoll(t, db, store, requestID, 2)
+
+	if err := store.RecordVote(ctx, poll.PollID, voterID, voterTelegramID, telegram.OptionApprove); err != nil {
+		t.Fatalf("RecordVote: %v", err)
+	}
+	if _, err := db.Exec("UPDATE users SET is_admin = false WHERE id = $1", demotedID); err != nil {
+		t.Fatalf("demoting user: %v", err)
+	}
+
+	pending, err := store.PendingVoters(ctx, poll.PollID)
+	if err != nil {
+		t.Fatalf("PendingVoters: %v", err)
+	}
+
+	byTelegramID := make(map[int64]telegram.Mention, len(pending))
+	for _, mention := range pending {
+		byTelegramID[mention.UserID] = mention
+		if mention.Name == unlinkedName {
+			t.Errorf("an admin without a Telegram ID cannot be mentioned but is pending: %+v", mention)
+		}
+	}
+
+	waiting, ok := byTelegramID[waitingTelegramID]
+	if !ok {
+		t.Fatalf("an admin who has not voted is missing from %+v", pending)
+	}
+	if want := fmt.Sprintf("tester_%d", waitingTelegramID); waiting.Name != want {
+		t.Errorf("pending admin is named %q, want %q", waiting.Name, want)
+	}
+	if _, ok = byTelegramID[voterTelegramID]; ok {
+		t.Errorf("an admin who voted is still pending")
+	}
+	if _, ok = byTelegramID[demotedTelegramID]; ok {
+		t.Errorf("a demoted admin is pending")
+	}
+	if _, ok = byTelegramID[outsiderTelegramID]; ok {
+		t.Errorf("a non-admin is pending")
+	}
+}
+
 func TestPollByIDReturnsNilForUnknownPoll(t *testing.T) {
 	db := testDB(t)
 	store := NewStore(db)

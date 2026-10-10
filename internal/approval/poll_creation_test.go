@@ -89,6 +89,45 @@ func TestCreatePollSendsNonAnonymousPollBelowTheDetails(t *testing.T) {
 	}
 }
 
+func TestCreatePollPinsThePollItself(t *testing.T) {
+	h := newHarness(t, sevenAdmins)
+
+	pins := h.bot.pinned()
+	if len(pins) != 1 {
+		t.Fatalf("pinned %d messages, want 1", len(pins))
+	}
+	if pins[0].chatID != h.poll.ChatID || pins[0].messageID != h.poll.MessageID {
+		t.Errorf("pinned %+v, want the poll message %d in chat %d", pins[0], h.poll.MessageID, h.poll.ChatID)
+	}
+}
+
+func TestCreatePollKeepsThePollWhenPinningFails(t *testing.T) {
+	store := newFakeStore(sevenAdmins...)
+	bot := newFakeBot()
+	bot.pinErr = errors.New("not enough rights to manage pinned messages in the chat")
+	manager := NewManager(store, bot, &fakeDecider{}, -1001)
+
+	if err := manager.CreatePoll(context.Background(), newRequest(), nil); err != nil {
+		t.Fatalf("CreatePoll: %v", err)
+	}
+	if len(store.polls) != 1 {
+		t.Errorf("stored %d polls, want 1", len(store.polls))
+	}
+}
+
+func TestClosePollUnpinsEvenWhenStoppingFails(t *testing.T) {
+	h := newHarness(t, sevenAdmins)
+	h.bot.stopErr = errors.New("poll has already been closed")
+
+	h.manager.ClosePoll(context.Background(), &h.poll)
+
+	unpins := h.bot.unpinned()
+	if len(unpins) != 1 || unpins[0].chatID != h.poll.ChatID || unpins[0].messageID != h.poll.MessageID {
+		t.Errorf("unpinned %+v after a failed stop, want the poll message %d in chat %d",
+			unpins, h.poll.MessageID, h.poll.ChatID)
+	}
+}
+
 func TestCreatePollStoresThresholdAndIdentifiers(t *testing.T) {
 	h := newHarness(t, sevenAdmins)
 

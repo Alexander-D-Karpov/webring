@@ -156,6 +156,9 @@ func startApprovalListener(db *sql.DB) {
 
 	runner := approval.NewRunner(telegram.NewClient(telegram.BotToken()), manager)
 	go runner.Run(context.Background())
+
+	reminder := approval.NewReminder(manager, approval.ReminderInterval())
+	go reminder.Run(context.Background())
 }
 
 func registerHandlers(r *mux.Router, db *sql.DB) {

@@ -76,6 +76,9 @@ func TestFourthApprovalDecidesAndClosesPoll(t *testing.T) {
 	if got := h.bot.stopCount(); got != 1 {
 		t.Errorf("StopPoll called %d times, want exactly 1", got)
 	}
+	if unpins := h.bot.unpinned(); len(unpins) != 1 || unpins[0].messageID != h.poll.MessageID {
+		t.Errorf("unpinned %v, want just the decided poll %d", unpins, h.poll.MessageID)
+	}
 }
 
 func TestFourDeclinesDecline(t *testing.T) {

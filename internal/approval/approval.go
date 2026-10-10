@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"webring/internal/models"
 	"webring/internal/telegram"
@@ -114,6 +115,9 @@ type Store interface {
 	// VoteSummaries returns the poll state for each of the given requests. Requests
 	// with no poll are absent from the result.
 	VoteSummaries(ctx context.Context, requestIDs []int) (map[int]*VoteSummary, error)
+
+	ClaimDueReminders(ctx context.Context, interval time.Duration) ([]Poll, error)
+	PendingVoters(ctx context.Context, pollID string) ([]telegram.Mention, error)
 }
 
 // Bot is the slice of the Telegram API the vote needs.
@@ -121,6 +125,8 @@ type Bot interface {
 	SendMessage(ctx context.Context, params telegram.SendMessageParams) (*telegram.SentMessage, error)
 	SendPoll(ctx context.Context, params telegram.SendPollParams) (*telegram.SentPoll, error)
 	StopPoll(ctx context.Context, chatID, messageID int64) error
+	PinChatMessage(ctx context.Context, chatID, messageID int64) error
+	UnpinChatMessage(ctx context.Context, chatID, messageID int64) error
 }
 
 // Decider applies the outcome of a vote to the request itself.
@@ -201,7 +207,7 @@ func (m *Manager) CreatePoll(ctx context.Context, req *models.UpdateRequest, sub
 		return fmt.Errorf("sending approval poll: %w", err)
 	}
 
-	return m.store.CreatePoll(ctx, Poll{
+	err = m.store.CreatePoll(ctx, Poll{
 		PollID:    sent.PollID,
 		RequestID: req.ID,
 		ChatID:    sent.ChatID,
@@ -209,6 +215,14 @@ func (m *Manager) CreatePoll(ctx context.Context, req *models.UpdateRequest, sub
 		Threshold: threshold,
 		Status:    StatusOpen,
 	})
+	if err != nil {
+		return err
+	}
+
+	if pinErr := m.bot.PinChatMessage(ctx, sent.ChatID, sent.MessageID); pinErr != nil {
+		log.Printf("Error pinning poll %s in the admin chat: %v", sent.PollID, pinErr)
+	}
+	return nil
 }
 
 // PollQuestion renders the poll's question. Telegram shows it as plain text, so it must
@@ -337,6 +351,9 @@ func (m *Manager) ClosePoll(ctx context.Context, poll *Poll) {
 	}
 	if err := m.bot.StopPoll(ctx, poll.ChatID, poll.MessageID); err != nil {
 		log.Printf("Error closing Telegram poll %s: %v", poll.PollID, err)
+	}
+	if err := m.bot.UnpinChatMessage(ctx, poll.ChatID, poll.MessageID); err != nil {
+		log.Printf("Error unpinning Telegram poll %s: %v", poll.PollID, err)
 	}
 }
 

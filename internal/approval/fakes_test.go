@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	"webring/internal/models"
 	"webring/internal/telegram"
@@ -41,16 +42,24 @@ type fakeStore struct {
 	votes map[string]map[int64]storedVote
 	seq   int
 
+	now        time.Time
+	createdAt  map[string]time.Time
+	remindedAt map[string]time.Time
+
 	claimAttempts int
 	failClaim     bool
 	tallyErr      error
+	createErr     error
 }
 
 func newFakeStore(adminTelegramIDs ...int64) *fakeStore {
 	s := &fakeStore{
-		admins: make(map[int64]*models.User),
-		polls:  make(map[string]*Poll),
-		votes:  make(map[string]map[int64]storedVote),
+		admins:     make(map[int64]*models.User),
+		polls:      make(map[string]*Poll),
+		votes:      make(map[string]map[int64]storedVote),
+		now:        time.Date(2026, time.January, 5, 9, 0, 0, 0, time.UTC),
+		createdAt:  make(map[string]time.Time),
+		remindedAt: make(map[string]time.Time),
 	}
 	for i, tgID := range adminTelegramIDs {
 		name := fmt.Sprintf("admin%d", i+1)
@@ -96,11 +105,27 @@ func (f *fakeStore) AdminByTelegramID(_ context.Context, telegramID int64) (*mod
 	return f.admins[telegramID], nil
 }
 
+func (f *fakeStore) advance(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.now = f.now.Add(d)
+}
+
+func (f *fakeStore) orphan(pollID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.polls[pollID].RequestID = 0
+}
+
 func (f *fakeStore) CreatePoll(_ context.Context, poll Poll) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return f.createErr
+	}
 	stored := poll
 	f.polls[poll.PollID] = &stored
+	f.createdAt[poll.PollID] = f.now
 	return nil
 }
 
@@ -284,7 +309,56 @@ func (f *fakeStore) VoteSummaries(_ context.Context, requestIDs []int) (map[int]
 	return summaries, nil
 }
 
-type stopCall struct {
+func (f *fakeStore) ClaimDueReminders(_ context.Context, interval time.Duration) ([]Poll, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	ids := make([]string, 0, len(f.polls))
+	for id := range f.polls {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	var due []Poll
+	for _, id := range ids {
+		poll := f.polls[id]
+		if poll.Status != StatusOpen {
+			continue
+		}
+		last := f.createdAt[id]
+		if reminded, ok := f.remindedAt[id]; ok {
+			last = reminded
+		}
+		if last.Add(interval).After(f.now) {
+			continue
+		}
+		f.remindedAt[id] = f.now
+		due = append(due, *poll)
+	}
+	return due, nil
+}
+
+func (f *fakeStore) PendingVoters(_ context.Context, pollID string) ([]telegram.Mention, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	voted := make(map[int]bool)
+	for _, vote := range f.votes[pollID] {
+		voted[vote.userID] = true
+	}
+
+	var pending []telegram.Mention
+	for telegramID, admin := range f.admins {
+		if voted[admin.ID] {
+			continue
+		}
+		pending = append(pending, telegram.Mention{Name: telegram.ResolveUserName(admin), UserID: telegramID})
+	}
+	sort.Slice(pending, func(i, j int) bool { return pending[i].UserID < pending[j].UserID })
+	return pending, nil
+}
+
+type messageRef struct {
 	chatID    int64
 	messageID int64
 }
@@ -295,12 +369,16 @@ type fakeBot struct {
 
 	messages []telegram.SendMessageParams
 	polls    []telegram.SendPollParams
-	stops    []stopCall
+	stops    []messageRef
+	pins     []messageRef
+	unpins   []messageRef
 
 	nextPollID    string
 	nextMessageID int64
 	sendMsgErr    error
 	sendPollErr   error
+	stopErr       error
+	pinErr        error
 }
 
 func newFakeBot() *fakeBot {
@@ -340,7 +418,24 @@ func (b *fakeBot) SendPoll(_ context.Context,
 func (b *fakeBot) StopPoll(_ context.Context, chatID, messageID int64) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.stops = append(b.stops, stopCall{chatID: chatID, messageID: messageID})
+	b.stops = append(b.stops, messageRef{chatID: chatID, messageID: messageID})
+	return b.stopErr
+}
+
+func (b *fakeBot) PinChatMessage(_ context.Context, chatID, messageID int64) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.pinErr != nil {
+		return b.pinErr
+	}
+	b.pins = append(b.pins, messageRef{chatID: chatID, messageID: messageID})
+	return nil
+}
+
+func (b *fakeBot) UnpinChatMessage(_ context.Context, chatID, messageID int64) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.unpins = append(b.unpins, messageRef{chatID: chatID, messageID: messageID})
 	return nil
 }
 
@@ -348,6 +443,24 @@ func (b *fakeBot) stopCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return len(b.stops)
+}
+
+func (b *fakeBot) pinned() []messageRef {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]messageRef(nil), b.pins...)
+}
+
+func (b *fakeBot) unpinned() []messageRef {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]messageRef(nil), b.unpins...)
+}
+
+func (b *fakeBot) sent() []telegram.SendMessageParams {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]telegram.SendMessageParams(nil), b.messages...)
 }
 
 func (b *fakeBot) sentTexts() []string {

@@ -18,6 +18,15 @@ type ChangeEntry struct {
 	Value string
 }
 
+type Mention struct {
+	Name   string
+	UserID int64
+}
+
+func (m Mention) String() string {
+	return fmt.Sprintf("[%s](tg://user?id=%d)", EscapeMarkdownV2(m.Name), m.UserID)
+}
+
 var (
 	msgTemplates map[string]*template.Template
 	tmplMu       sync.RWMutex
@@ -95,6 +104,14 @@ var templateSchema = map[string]map[string]interface{}{
 		"UserName": "test",
 		"Voters":   []string{"test"},
 	},
+	"poll_reminder": {
+		"RequestID": 1,
+		"SiteName":  "test",
+		"Approve":   1,
+		"Decline":   1,
+		"Threshold": 4,
+		"Pending":   []Mention{{Name: "test", UserID: 1}},
+	},
 }
 
 var staticEscaper = regexp.MustCompile(`([_\[\]()~>#+\-=|{}.!\\])`)
@@ -140,6 +157,7 @@ var defaults = map[string]string{
 	"site_offline":          "*Site Status: Offline*\n\nYour site *{{.SiteName}}* is currently not responding after {{.DownThreshold}} consecutive checks. Please check your server.",
 	"poll_approved":         "*Request Approved by Vote*\n\n*Site:* {{.SiteName}}\n*User:* {{.UserName}}\n{{- if .Voters}}\n\n*Approved by:*\n{{- range .Voters}}\n  • {{.}}\n{{- end}}\n{{- end}}",
 	"poll_declined":         "*Request Declined by Vote*\n\n*Site:* {{.SiteName}}\n*User:* {{.UserName}}\n{{- if .Voters}}\n\n*Declined by:*\n{{- range .Voters}}\n  • {{.}}\n{{- end}}\n{{- end}}",
+	"poll_reminder":         "*Not Enough Votes Yet*\n\n*Request:* #{{.RequestID}}\n*Site:* {{.SiteName}}\n*Approve:* {{.Approve}} of {{.Threshold}}\n*Decline:* {{.Decline}} of {{.Threshold}}\n{{- if .Pending}}\n\n*Not voted yet:*\n{{- range .Pending}}\n  • {{.}}\n{{- end}}\n{{- else}}\n\nEveryone has voted, but no option has a majority. Decide it from the dashboard.\n{{- end}}",
 }
 
 func mustParseFallback(name, fallback string) *template.Template {

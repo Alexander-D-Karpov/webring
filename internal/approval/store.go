@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log"
+	"time"
 
 	"webring/internal/models"
 	"webring/internal/requests"
@@ -84,7 +85,11 @@ func (s *pgStore) CreatePoll(ctx context.Context, poll Poll) error {
 
 const pollColumns = `poll_id, request_id, chat_id, message_id, threshold, status`
 
-func scanPoll(row *sql.Row) (*Poll, error) {
+type rowScanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scanPoll(row rowScanner) (*Poll, error) {
 	var poll Poll
 	var requestID sql.NullInt64
 	var status string
@@ -298,6 +303,63 @@ func (s *pgStore) VoteSummaries(ctx context.Context, requestIDs []int) (map[int]
 	}
 
 	return summaries, rows.Err()
+}
+
+func (s *pgStore) ClaimDueReminders(ctx context.Context, interval time.Duration) ([]Poll, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		UPDATE request_polls SET reminded_at = NOW()
+		WHERE status = 'open'
+		  AND COALESCE(reminded_at, created_at) <= NOW() - make_interval(secs => $1)
+		RETURNING `+pollColumns, interval.Seconds())
+	if err != nil {
+		return nil, err
+	}
+	defer closeRows(rows)
+
+	var polls []Poll
+	for rows.Next() {
+		poll, scanErr := scanPoll(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		polls = append(polls, *poll)
+	}
+	return polls, rows.Err()
+}
+
+func (s *pgStore) PendingVoters(ctx context.Context, pollID string) ([]telegram.Mention, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT u.telegram_id, u.telegram_username, u.first_name, u.last_name
+		FROM users u
+		WHERE u.is_admin = true AND u.telegram_id IS NOT NULL
+		  AND NOT EXISTS (
+		      SELECT 1 FROM request_poll_votes v
+		      WHERE v.poll_id = $1 AND v.user_id = u.id
+		  )
+		ORDER BY u.id
+	`, pollID)
+	if err != nil {
+		return nil, err
+	}
+	defer closeRows(rows)
+
+	var pending []telegram.Mention
+	for rows.Next() {
+		var telegramID int64
+		var username, firstName, lastName sql.NullString
+		if scanErr := rows.Scan(&telegramID, &username, &firstName, &lastName); scanErr != nil {
+			return nil, scanErr
+		}
+		pending = append(pending, telegram.Mention{
+			Name: telegram.ResolveUserName(&models.User{
+				TelegramUsername: nullable(username),
+				FirstName:        nullable(firstName),
+				LastName:         nullable(lastName),
+			}),
+			UserID: telegramID,
+		})
+	}
+	return pending, rows.Err()
 }
 
 func nullable(value sql.NullString) *string {

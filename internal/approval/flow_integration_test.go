@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"webring/internal/requests"
 	"webring/internal/telegram"
@@ -276,6 +277,57 @@ func TestOutsidersCannotCarryAVoteEndToEnd(t *testing.T) {
 	}
 	if got := f.pollStatus(t); got != StatusOpen {
 		t.Errorf("poll status = %q, want it to still be %q", got, StatusOpen)
+	}
+}
+
+func TestDailyReminderPingsTheAdminsWhoHaveNotVotedEndToEnd(t *testing.T) {
+	f := newFlowFixture(t, "create")
+	f.cleanupSite(t)
+
+	f.vote(t, 0, telegram.OptionApprove)
+	f.vote(t, 1, telegram.OptionDecline)
+
+	if _, err := f.db.Exec(`UPDATE request_polls SET created_at = NOW() - INTERVAL '25 hours'
+		WHERE poll_id = $1`, f.poll.PollID); err != nil {
+		t.Fatalf("backdating the poll: %v", err)
+	}
+
+	remind := func() []telegram.SendMessageParams {
+		t.Helper()
+		if err := f.manager.SendReminders(context.Background(), 24*time.Hour); err != nil {
+			t.Fatalf("SendReminders: %v", err)
+		}
+		var found []telegram.SendMessageParams
+		for _, m := range reminderMessages(f.bot) {
+			if m.ReplyToMessageID == f.poll.MessageID {
+				found = append(found, m)
+			}
+		}
+		return found
+	}
+
+	reminders := remind()
+	if len(reminders) != 1 {
+		t.Fatalf("sent %d reminders, want 1", len(reminders))
+	}
+	text := reminders[0].Text
+
+	if want := fmt.Sprintf(`\#%d`, f.requestID); !strings.Contains(text, want) {
+		t.Errorf("reminder does not name request %s:\n%s", want, text)
+	}
+	for i := 2; i < 7; i++ {
+		if !strings.Contains(text, mentionOf(f.adminTelegramIDs[i])) {
+			t.Errorf("reminder does not ping admin %d:\n%s", f.adminTelegramIDs[i], text)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if strings.Contains(text, mentionOf(f.adminTelegramIDs[i])) {
+			t.Errorf("reminder pings admin %d, who has already voted:\n%s", f.adminTelegramIDs[i], text)
+		}
+	}
+
+	if again := remind(); len(again) != 1 {
+		t.Errorf("sent %d reminders after an immediate second sweep, want still 1", len(again))
 	}
 }
 

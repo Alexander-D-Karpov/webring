@@ -1,0 +1,16 @@
+*Not Enough Votes Yet*
+
+*Request:* #{{.RequestID}}
+*Site:* {{.SiteName}}
+*Approve:* {{.Approve}} of {{.Threshold}}
+*Decline:* {{.Decline}} of {{.Threshold}}
+{{- if .Pending}}
+
+*Not voted yet:*
+{{- range .Pending}}
+  • {{.}}
+{{- end}}
+{{- else}}
+
+Everyone has voted, but no option has a majority. Decide it from the dashboard.
+{{- end}}

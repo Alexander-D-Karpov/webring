@@ -275,6 +275,60 @@ func TestStopPollIdentifiesTheMessage(t *testing.T) {
 	}
 }
 
+func TestPinChatMessageNotifiesTheChat(t *testing.T) {
+	api := newFakeAPI(t)
+
+	if err := api.client().PinChatMessage(context.Background(), -1001, 55); err != nil {
+		t.Fatalf("PinChatMessage: %v", err)
+	}
+
+	call := api.lastCall(t)
+	if call.method != "pinChatMessage" {
+		t.Errorf("called %q, want pinChatMessage", call.method)
+	}
+	if chatID := numField(t, call.body, "chat_id"); chatID != -1001 {
+		t.Errorf("chat_id = %d, want -1001", chatID)
+	}
+	if messageID := numField(t, call.body, "message_id"); messageID != 55 {
+		t.Errorf("message_id = %d, want 55", messageID)
+	}
+	if silent, ok := call.body["disable_notification"].(bool); !ok || silent {
+		t.Errorf("disable_notification = %v, want an explicit false so the whole chat is notified",
+			call.body["disable_notification"])
+	}
+}
+
+func TestUnpinChatMessageNamesTheMessage(t *testing.T) {
+	api := newFakeAPI(t)
+
+	if err := api.client().UnpinChatMessage(context.Background(), -1001, 55); err != nil {
+		t.Fatalf("UnpinChatMessage: %v", err)
+	}
+
+	call := api.lastCall(t)
+	if call.method != "unpinChatMessage" {
+		t.Errorf("called %q, want unpinChatMessage", call.method)
+	}
+	if chatID := numField(t, call.body, "chat_id"); chatID != -1001 {
+		t.Errorf("chat_id = %d, want -1001", chatID)
+	}
+	if messageID := numField(t, call.body, "message_id"); messageID != 55 {
+		t.Errorf("message_id = %d, want 55", messageID)
+	}
+}
+
+func TestUnpinChatMessageRefusesToGuessTheMessage(t *testing.T) {
+	api := newFakeAPI(t)
+
+	if err := api.client().UnpinChatMessage(context.Background(), -1001, 0); err == nil {
+		t.Fatalf("UnpinChatMessage succeeded without a message ID")
+	}
+	if len(api.calls) != 0 {
+		t.Errorf("called %s without a message ID, which unpins the latest pinned message instead",
+			api.calls[0].method)
+	}
+}
+
 func TestSendMessageDefaultsToMarkdownV2(t *testing.T) {
 	api := newFakeAPI(t)
 	api.reply = func(method string) (int, string) {

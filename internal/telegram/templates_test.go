@@ -99,6 +99,64 @@ func TestVoterNamesAreMarkdownEscaped(t *testing.T) {
 	}
 }
 
+func TestMentionEscapesTheNameButNotTheLink(t *testing.T) {
+	got := Mention{Name: "x)y_z", UserID: 7}.String()
+	if want := `[x\)y\_z](tg://user?id=7)`; got != want {
+		t.Errorf("Mention.String() = %q, want %q", got, want)
+	}
+}
+
+func TestPollReminderMentionsPendingAdmins(t *testing.T) {
+	text := RenderMessage("poll_reminder", map[string]interface{}{
+		"RequestID": 42,
+		"SiteName":  "Example Site",
+		"Approve":   2,
+		"Decline":   1,
+		"Threshold": 4,
+		"Pending":   []Mention{{Name: "Alice", UserID: 101}, {Name: "@b_c.d", UserID: 102}},
+	})
+
+	for _, want := range []string{
+		"[Alice](tg://user?id=101)",
+		`[@b\_c\.d](tg://user?id=102)`,
+		`\#42`,
+		"Example Site",
+		"2 of 4",
+		"1 of 4",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%q missing from:\n%s", want, text)
+		}
+	}
+	if strings.Index(text, "Alice") > strings.Index(text, "b\\_c") {
+		t.Errorf("pending admins are not listed in the order they were given:\n%s", text)
+	}
+	if strings.Contains(text, "Everyone has voted") {
+		t.Errorf("reminder claims everyone has voted while admins are pending:\n%s", text)
+	}
+}
+
+func TestPollReminderWithNobodyLeftToPing(t *testing.T) {
+	text := RenderMessage("poll_reminder", map[string]interface{}{
+		"RequestID": 42,
+		"SiteName":  "Example Site",
+		"Approve":   3,
+		"Decline":   3,
+		"Threshold": 4,
+		"Pending":   []Mention(nil),
+	})
+
+	if text == "" {
+		t.Fatalf("poll_reminder rendered empty with nobody pending")
+	}
+	if strings.Contains(text, "tg://user") || strings.Contains(text, "•") {
+		t.Errorf("poll_reminder lists pending admins although there are none:\n%s", text)
+	}
+	if !strings.Contains(text, "Everyone has voted") {
+		t.Errorf("poll_reminder does not explain the deadlock:\n%s", text)
+	}
+}
+
 func TestAutoEscapeDataEscapesStringSlices(t *testing.T) {
 	escaped := autoEscapeData(map[string]interface{}{
 		"Voters": []string{"a_b", "c.d"},

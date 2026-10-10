@@ -89,6 +89,96 @@ func TestCreatePollSendsNonAnonymousPollBelowTheDetails(t *testing.T) {
 	}
 }
 
+func TestCreatePollPinsThePollItself(t *testing.T) {
+	h := newHarness(t, sevenAdmins)
+
+	pins := h.bot.pinned()
+	if len(pins) != 1 {
+		t.Fatalf("pinned %d messages, want 1", len(pins))
+	}
+	if pins[0].chatID != h.poll.ChatID || pins[0].messageID != h.poll.MessageID {
+		t.Errorf("pinned %+v, want the poll message %d in chat %d", pins[0], h.poll.MessageID, h.poll.ChatID)
+	}
+}
+
+func TestCreatePollKeepsThePollWhenPinningFails(t *testing.T) {
+	store := newFakeStore(sevenAdmins...)
+	bot := newFakeBot()
+	bot.pinErr = errors.New("not enough rights to manage pinned messages in the chat")
+	manager := NewManager(store, bot, &fakeDecider{}, -1001)
+
+	if err := manager.CreatePoll(context.Background(), newRequest(), nil); err != nil {
+		t.Fatalf("CreatePoll: %v", err)
+	}
+	if len(store.polls) != 1 {
+		t.Errorf("stored %d polls, want 1", len(store.polls))
+	}
+}
+
+func TestCreatePollDoesNotPinAPollItCouldNotStore(t *testing.T) {
+	store := newFakeStore(sevenAdmins...)
+	store.createErr = errors.New("database is down")
+	bot := newFakeBot()
+	manager := NewManager(store, bot, &fakeDecider{}, -1001)
+
+	if err := manager.CreatePoll(context.Background(), newRequest(), nil); err == nil {
+		t.Fatalf("CreatePoll succeeded although the poll was not stored")
+	}
+	if pins := bot.pinned(); len(pins) != 0 {
+		t.Errorf("pinned %v, a poll whose votes can never be counted", pins)
+	}
+}
+
+func TestCreatePollIsNotPinnedWithoutAdminChat(t *testing.T) {
+	bot := newFakeBot()
+	manager := NewManager(newFakeStore(sevenAdmins...), bot, &fakeDecider{}, 0)
+
+	if err := manager.CreatePoll(context.Background(), newRequest(), nil); err != nil {
+		t.Fatalf("CreatePoll: %v", err)
+	}
+	if pins := bot.pinned(); len(pins) != 0 {
+		t.Errorf("pinned %v with polls disabled", pins)
+	}
+}
+
+func TestClosePollUnpinsThePoll(t *testing.T) {
+	h := newHarness(t, sevenAdmins)
+
+	h.manager.ClosePoll(context.Background(), &h.poll)
+
+	unpins := h.bot.unpinned()
+	if len(unpins) != 1 {
+		t.Fatalf("unpinned %d messages, want 1", len(unpins))
+	}
+	if unpins[0].chatID != h.poll.ChatID || unpins[0].messageID != h.poll.MessageID {
+		t.Errorf("unpinned %+v, want the poll message %d in chat %d", unpins[0], h.poll.MessageID, h.poll.ChatID)
+	}
+}
+
+func TestClosePollUnpinsEvenWhenStoppingFails(t *testing.T) {
+	h := newHarness(t, sevenAdmins)
+	h.bot.stopErr = errors.New("poll has already been closed")
+
+	h.manager.ClosePoll(context.Background(), &h.poll)
+
+	if unpins := h.bot.unpinned(); len(unpins) != 1 {
+		t.Errorf("unpinned %d messages after a failed stop, want 1", len(unpins))
+	}
+}
+
+func TestClosePollWithoutMessageTouchesNothing(t *testing.T) {
+	h := newHarness(t, sevenAdmins)
+
+	h.manager.ClosePoll(context.Background(), &Poll{PollID: h.poll.PollID, ChatID: h.poll.ChatID})
+
+	if h.bot.stopCount() != 0 {
+		t.Errorf("stopped a poll without knowing its message")
+	}
+	if unpins := h.bot.unpinned(); len(unpins) != 0 {
+		t.Errorf("unpinned %v without knowing the message", unpins)
+	}
+}
+
 func TestCreatePollStoresThresholdAndIdentifiers(t *testing.T) {
 	h := newHarness(t, sevenAdmins)
 

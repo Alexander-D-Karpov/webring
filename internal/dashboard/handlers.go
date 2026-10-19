@@ -480,6 +480,7 @@ func moveSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 		before := 0
 		if raw := r.FormValue("before"); raw != "" {
 			if before, err = strconv.Atoi(raw); err != nil {

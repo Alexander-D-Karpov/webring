@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -79,7 +80,7 @@ func RegisterHandlers(r *mux.Router, db *sql.DB) {
 	adminRouter.HandleFunc("/remove/{id}", removeSiteHandler(db)).Methods("POST")
 	adminRouter.HandleFunc("/update/{id}", updateSiteHandler(db)).Methods("POST")
 	adminRouter.HandleFunc("/reorder/{id}/{direction}", reorderSiteHandler(db)).Methods("POST")
-	adminRouter.HandleFunc("/move/{id}/{position}", moveSiteHandler(db)).Methods("POST")
+	adminRouter.HandleFunc("/move/{id}", moveSiteHandler(db)).Methods("POST")
 	adminRouter.HandleFunc("/toggle-enabled/{id}", toggleEnabledHandler(db)).Methods("POST")
 }
 
@@ -470,38 +471,21 @@ func normalizeDisplayOrder(tx *sql.Tx) error {
 	return nil
 }
 
+// moveSiteHandler puts a site right before the site given in "before", or last when it is empty.
 func moveSiteHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		idStr := mux.Vars(r)["id"]
-		positionStr := mux.Vars(r)["position"]
-
-		id, err := strconv.Atoi(idStr)
+		id, err := strconv.Atoi(mux.Vars(r)["id"])
 		if err != nil {
 			http.Error(w, "Invalid ID", http.StatusBadRequest)
 			return
 		}
 
-		targetPosition, err := strconv.Atoi(positionStr)
-		if err != nil {
-			http.Error(w, "Invalid position", http.StatusBadRequest)
-			return
-		}
-
-		var currentOrder int
-		err = db.QueryRow("SELECT display_order FROM sites WHERE id = $1", id).Scan(&currentOrder)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				http.Error(w, "Site not found", http.StatusNotFound)
-			} else {
-				log.Printf("Error fetching site order: %v", err)
-				http.Error(w, "Error fetching site", http.StatusInternalServerError)
+		before := 0
+		if raw := r.FormValue("before"); raw != "" {
+			if before, err = strconv.Atoi(raw); err != nil {
+				http.Error(w, "Invalid target", http.StatusBadRequest)
+				return
 			}
-			return
-		}
-
-		if currentOrder == targetPosition {
-			w.WriteHeader(http.StatusOK)
-			return
 		}
 
 		tx, err := db.Begin()
@@ -516,31 +500,31 @@ func moveSiteHandler(db *sql.DB) http.HandlerFunc {
 			}
 		}()
 
-		if currentOrder < targetPosition {
-			_, err = tx.Exec(`
-				UPDATE sites 
-				SET display_order = display_order - 1 
-				WHERE display_order > $1 AND display_order <= $2
-			`, currentOrder, targetPosition)
-		} else {
-			_, err = tx.Exec(`
-				UPDATE sites 
-				SET display_order = display_order + 1 
-				WHERE display_order >= $2 AND display_order < $1
-			`, currentOrder, targetPosition)
-		}
-
+		ids, err := lockedSiteOrder(tx)
 		if err != nil {
-			log.Printf("Error updating display orders: %v", err)
+			log.Printf("Error reading site order: %v", err)
 			http.Error(w, "Error moving site", http.StatusInternalServerError)
 			return
 		}
 
-		_, err = tx.Exec("UPDATE sites SET display_order = $1 WHERE id = $2", targetPosition, id)
-		if err != nil {
-			log.Printf("Error setting new position: %v", err)
+		order, ok := moveBefore(ids, id, before)
+		if !ok {
+			http.Error(w, "Site list changed, reload the page", http.StatusConflict)
+			return
+		}
+
+		// Park rows on negative values first so the unique index never sees a collision.
+		if _, err = tx.Exec("UPDATE sites SET display_order = -display_order - 1"); err != nil {
+			log.Printf("Error clearing display order: %v", err)
 			http.Error(w, "Error moving site", http.StatusInternalServerError)
 			return
+		}
+		for i, siteID := range order {
+			if _, err = tx.Exec("UPDATE sites SET display_order = $1 WHERE id = $2", i+1, siteID); err != nil {
+				log.Printf("Error setting display order: %v", err)
+				http.Error(w, "Error moving site", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		if err = tx.Commit(); err != nil {
@@ -549,8 +533,77 @@ func moveSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		w.WriteHeader(http.StatusOK)
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 	}
+}
+
+// lockedSiteOrder returns site IDs in display order; rows are locked by id to avoid deadlocks.
+func lockedSiteOrder(tx *sql.Tx) ([]int, error) {
+	rows, err := tx.Query("SELECT id, display_order FROM sites ORDER BY id FOR UPDATE")
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("Error closing rows: %v", closeErr)
+		}
+	}()
+
+	type entry struct{ id, order int }
+	var sites []entry
+	for rows.Next() {
+		var e entry
+		if scanErr := rows.Scan(&e.id, &e.order); scanErr != nil {
+			return nil, scanErr
+		}
+		sites = append(sites, e)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, rowsErr
+	}
+
+	sort.SliceStable(sites, func(i, j int) bool { return sites[i].order < sites[j].order })
+	ids := make([]int, len(sites))
+	for i, e := range sites {
+		ids[i] = e.id
+	}
+	return ids, nil
+}
+
+// moveBefore moves id in front of before (0 means last); false when either is missing.
+func moveBefore(ids []int, id, before int) ([]int, bool) {
+	if id == before {
+		for _, siteID := range ids {
+			if siteID == id {
+				return ids, true
+			}
+		}
+		return nil, false
+	}
+
+	order := make([]int, 0, len(ids))
+	found := false
+	for _, siteID := range ids {
+		if siteID == id {
+			found = true
+			continue
+		}
+		order = append(order, siteID)
+	}
+	if !found {
+		return nil, false
+	}
+
+	for i, siteID := range order {
+		if siteID == before {
+			order = append(order[:i], append([]int{id}, order[i:]...)...)
+			return order, true
+		}
+	}
+	if before != 0 {
+		return nil, false
+	}
+	return append(order, id), true
 }
 
 func getAllSites(db *sql.DB) ([]models.Site, error) {

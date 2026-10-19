@@ -549,6 +549,7 @@ input[type=url] {
     color: var(--color-gray-300);
     min-width: 2rem;
     text-align: center;
+    cursor: grab;
 }
 
 .order-actions {

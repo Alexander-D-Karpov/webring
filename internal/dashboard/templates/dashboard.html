@@ -115,10 +115,10 @@
                 </td>
             </tr>
             {{range .Sites}}
-            <tr class="row-site">
+            <tr class="row-site" data-id="{{.ID}}">
                 <td>
                     <div class="order-controls">
-                        <span class="order-number">{{.ID}}</span>
+                        <span class="order-number" draggable="true" title="Drag to move">{{.ID}}</span>
                         <div class="order-actions">
                             <form action="/admin/reorder/{{.ID}}/up" method="POST">
                                 {{csrfField $.Request}}
@@ -216,5 +216,42 @@
         </table>
     </div>
 </main>
+<form id="form-move" method="POST" style="display: none">
+    {{csrfField .Request}}
+    <input type="hidden" name="before">
+</form>
+<script>
+(function () {
+    var dragged = null;
+    document.querySelectorAll('.row-site .order-number').forEach(function (handle) {
+        handle.addEventListener('dragstart', function (e) {
+            dragged = handle.closest('tr').dataset.id;
+            e.dataTransfer.setData('text/plain', dragged);
+        });
+    });
+    document.querySelectorAll('.row-site').forEach(function (row) {
+        row.addEventListener('dragover', function (e) {
+            if (dragged) e.preventDefault();
+        });
+        row.addEventListener('drop', function (e) {
+            e.preventDefault();
+            if (!dragged || row.dataset.id === dragged) return;
+            var rect = row.getBoundingClientRect();
+            var target = row;
+            if (e.clientY > rect.top + rect.height / 2) {
+                target = row.nextElementSibling;
+                while (target && !target.classList.contains('row-site')) target = target.nextElementSibling;
+            }
+            var prev = target ? target.previousElementSibling : row.parentNode.lastElementChild;
+            if ((target && target.dataset.id === dragged) || (prev && prev.dataset.id === dragged)) return;
+            var form = document.getElementById('form-move');
+            form.action = '/admin/move/' + dragged;
+            form.elements.before.value = target ? target.dataset.id : '';
+            form.submit();
+        });
+    });
+    document.addEventListener('dragend', function () { dragged = null; });
+})();
+</script>
 </body>
 </html>

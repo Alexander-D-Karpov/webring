@@ -106,8 +106,10 @@ func mixedAuthMiddleware(db *sql.DB) func(http.Handler) http.Handler {
 }
 
 func RegisterHandlers(r *mux.Router, db *sql.DB) {
+	login := auth.NewTelegramLogin()
 	r.HandleFunc("/login", loginPageHandler()).Methods("GET")
-	r.HandleFunc("/auth/telegram", telegramAuthHandler(db)).Methods("GET")
+	r.HandleFunc("/auth/telegram/start", login.Start).Methods("POST")
+	r.HandleFunc("/auth/telegram", telegramAuthHandler(db, login)).Methods("GET")
 	r.HandleFunc("/logout", logoutHandler(db)).Methods("POST")
 
 	userRouter := r.PathPrefix("/user").Subrouter()
@@ -208,7 +210,7 @@ func clearUserSessions(db *sql.DB, userID int) error {
 }
 
 func loginPageHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		templatesMu.RLock()
 		t := templates
 		templatesMu.RUnlock()
@@ -218,13 +220,8 @@ func loginPageHandler() http.HandlerFunc {
 			return
 		}
 
-		data := struct {
-			BotUsername string
-		}{
-			BotUsername: os.Getenv("TELEGRAM_BOT_USERNAME"),
-		}
-
-		if err := t.ExecuteTemplate(w, "login.html", data); err != nil {
+		w.Header().Set("Cache-Control", "no-store")
+		if err := t.ExecuteTemplate(w, "login.html", r); err != nil {
 			log.Printf("Error rendering login template: %v", err)
 			http.Error(w, "Error rendering template", http.StatusInternalServerError)
 			return
@@ -232,15 +229,9 @@ func loginPageHandler() http.HandlerFunc {
 	}
 }
 
-func telegramAuthHandler(db *sql.DB) http.HandlerFunc {
+func telegramAuthHandler(db *sql.DB, login *auth.TelegramLogin) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-		if botToken == "" {
-			http.Error(w, "Bot token not configured", http.StatusInternalServerError)
-			return
-		}
-
-		tgUser, err := auth.VerifyTelegramAuth(r.URL.Query(), botToken)
+		tgUser, err := login.User(w, r)
 		if err != nil {
 			log.Printf("Telegram auth verification failed: %v", err)
 			http.Error(w, "Authentication failed", http.StatusUnauthorized)
@@ -330,7 +321,7 @@ func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error
 			&user.FirstName, &user.LastName, &user.IsAdmin, &user.CreatedAt)
 
 		if err == nil {
-			_, updateErr := db.Exec(`
+			result, updateErr := db.Exec(`
 				UPDATE users 
 				SET telegram_id = $1, first_name = $2, last_name = $3, telegram_username = $4
 				WHERE id = $5 AND telegram_id IS NULL
@@ -338,6 +329,13 @@ func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error
 
 			if updateErr != nil {
 				return nil, fmt.Errorf("error updating placeholder account: %w", updateErr)
+			}
+			updated, updateErr := result.RowsAffected()
+			if updateErr != nil {
+				return nil, fmt.Errorf("error checking placeholder account update: %w", updateErr)
+			}
+			if updated != 1 {
+				return nil, errors.New("placeholder account was already claimed; retry login")
 			}
 
 			user.TelegramID = tgUser.ID
@@ -372,7 +370,17 @@ func getOrCreateUser(db *sql.DB, tgUser *auth.TelegramUser) (*models.User, error
 	if err != nil {
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code.Name() == "unique_violation" {
-			return getOrCreateUser(db, tgUser)
+			// A concurrent login may have created this Telegram ID. A username
+			// conflict with another ID is different and must not retry forever.
+			var exists bool
+			if queryErr := db.QueryRow(`SELECT EXISTS (
+				SELECT 1 FROM users WHERE telegram_id = $1
+			)`, tgUser.ID).Scan(&exists); queryErr != nil {
+				return nil, fmt.Errorf("error checking concurrent user creation: %w", queryErr)
+			}
+			if exists {
+				return getOrCreateUser(db, tgUser)
+			}
 		}
 		return nil, fmt.Errorf("error creating user: %w", err)
 	}

@@ -17,18 +17,23 @@ This project is a webring relay service built with Go. It manages a list of webs
 
 ## Prerequisites
 
-- Go 1.16 or later
+- Go 1.25.0 or later
 - PostgreSQL database
 
 ## Installation
 
-edit .env to set correct path to database
-```
-go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-go mod tidy
+Copy the environment template, set `DB_CONNECTION_STRING` and the other values for your
+installation, then apply the migrations:
+
+```sh
 cp .env.template .env
+# Edit .env before running the migrations.
+go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 make migrate-up
 ```
+
+Set `CSRF_AUTH_KEY` to a private, random value of at least 32 bytes. The sample values are
+not suitable for production. See [Telegram Login](#telegram-login) to enable user login.
 
 ## Local Run
 ```
@@ -41,6 +46,46 @@ wget https://github.com/Alexander-D-Karpov/webring/releases/latest/download/webr
 chmod +x webring
 ./webring
 ```
+
+## Telegram Login
+
+Login uses Telegram's [OpenID Connect authorization code flow](https://core.telegram.org/bots/telegram-login)
+with PKCE, rather than the legacy login widget. Before deploying this version:
+
+1. Open the [@BotFather](https://t.me/botfather) mini app, select your bot and open
+   **Login Widget**. Add the exact HTTPS callback URL to **Allowed URLs**, for example
+   `https://otor.ing/auth/telegram`.
+2. Copy the Client ID and Client Secret from that screen. Keep the signing algorithm at
+   the default **RS256** under Login Widget > Advanced.
+3. Set the following in `.env` or the server's systemd `EnvironmentFile`, replacing the
+   example URL with the registered callback URL:
+
+   ```dotenv
+   TELEGRAM_OIDC_CLIENT_ID=<client-id>
+   TELEGRAM_OIDC_CLIENT_SECRET=<client-secret>
+   TELEGRAM_OIDC_REDIRECT_URL=https://otor.ing/auth/telegram
+   ```
+
+   On NixOS, `services.webring.environmentFile` can point to a file containing these
+   values without putting the secret in the Nix store. Keep that file private.
+   `TELEGRAM_BOT_TOKEN` is still needed for bot notifications and approval polls; the old
+   `TELEGRAM_BOT_USERNAME` is no longer used for login.
+4. Rebuild and restart the server; the login template is embedded in the binary. Open
+   `/login` in a private browser window and sign in with an existing site owner's Telegram
+   account. The existing site should appear in the dashboard. The `profile` scope supplies
+   the numeric Telegram ID used to match existing accounts; `telegram:bot_access` requests
+   permission for the bot to send messages.
+
+The callback and login cookies require HTTPS. To test login locally, use a registered HTTPS
+URL that reaches the local server. A server without the three OIDC settings responds with
+`503` when login is started; configure them before deploying to avoid interrupting login.
+
+## Tests
+
+Run `go test -p 1 ./...` and `go build ./cmd/server ./cmd/ringcheck`. Database integration
+tests require `TEST_DB_CONNECTION_STRING` pointing to a **dedicated test database** with
+all migrations applied. Some tests truncate tables, so never point them at a development or
+production database. Browser-based ring checks require Chromium on `PATH` or `CHROME_PATH`.
 
 ## Customizing Notification Messages
 

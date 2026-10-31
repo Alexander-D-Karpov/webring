@@ -85,7 +85,9 @@ jobs:
           CHECKER_DEBUG: "false"
           LOG_FILE_PATH: test.log
           TELEGRAM_BOT_TOKEN: ""
-          TELEGRAM_BOT_USERNAME: ""
+          TELEGRAM_OIDC_CLIENT_ID: ""
+          TELEGRAM_OIDC_CLIENT_SECRET: ""
+          TELEGRAM_OIDC_REDIRECT_URL: ""
           PORT: "8080"
           MEDIA_FOLDER: "media"
           SESSION_TTL_HOURS: "2160"

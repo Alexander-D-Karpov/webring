@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"webring/internal/favicon"
+	"webring/internal/siteurl"
 
 	"github.com/gorilla/mux"
 	"github.com/lib/pq"
@@ -158,6 +159,13 @@ func addSiteHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		verifiedURL, verifyErr := siteurl.Verify(r.Context(), url)
+		if verifyErr != nil {
+			http.Error(w, "Invalid Site URL: "+verifyErr.Error(), http.StatusBadRequest)
+			return
+		}
+		url = verifiedURL
+
 		var maxDisplayOrder int
 		err = db.QueryRow("SELECT COALESCE(MAX(display_order), 0) FROM sites").Scan(&maxDisplayOrder)
 		if err != nil {
@@ -257,6 +265,25 @@ func updateSiteHandler(db *sql.DB) http.HandlerFunc {
 		if !models.ValidAdminSlug(slug) {
 			http.Error(w, "Invalid Slug format", http.StatusBadRequest)
 			return
+		}
+
+		var currentURL string
+		if lookupErr := db.QueryRowContext(r.Context(),
+			"SELECT url FROM sites WHERE id = $1", id).Scan(&currentURL); lookupErr != nil {
+			if errors.Is(lookupErr, sql.ErrNoRows) {
+				http.Error(w, "Site not found", http.StatusNotFound)
+			} else {
+				http.Error(w, "Error reading site", http.StatusInternalServerError)
+			}
+			return
+		}
+		if url != currentURL {
+			verifiedURL, verifyErr := siteurl.Verify(r.Context(), url)
+			if verifyErr != nil {
+				http.Error(w, "Invalid Site URL: "+verifyErr.Error(), http.StatusBadRequest)
+				return
+			}
+			url = verifiedURL
 		}
 
 		var userID *int

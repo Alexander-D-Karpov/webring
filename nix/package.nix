@@ -7,7 +7,7 @@
 
   nativeBuildInputs = [ makeWrapper ];
 
-  vendorHash = "sha256-QAc6hEoXtDorh2b5pZfezblgHhDUPEmdkfuaYnvuPpI=";
+  vendorHash = "sha256-TeAJWCJwnKicTl1AqTiDmiwO9cgPujw/rWhs+gJV0k8=";
 
   postInstall = ''
     mv $out/bin/server $out/bin/webring-server

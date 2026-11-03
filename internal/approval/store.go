@@ -9,6 +9,7 @@ import (
 
 	"webring/internal/models"
 	"webring/internal/requests"
+	"webring/internal/siteurl"
 	"webring/internal/telegram"
 
 	"github.com/lib/pq"
@@ -378,12 +379,18 @@ func closeRows(rows *sql.Rows) {
 
 // dbDecider applies vote outcomes through the requests package.
 type dbDecider struct {
-	db *sql.DB
+	db     *sql.DB
+	verify requests.URLVerifier
 }
 
 // NewDecider returns a Decider backed by the application database.
 func NewDecider(db *sql.DB) Decider {
-	return &dbDecider{db: db}
+	return NewDeciderWithVerifier(db, siteurl.Verify)
+}
+
+// NewDeciderWithVerifier permits deterministic offline integration tests.
+func NewDeciderWithVerifier(db *sql.DB, verify requests.URLVerifier) Decider {
+	return &dbDecider{db: db, verify: verify}
 }
 
 func (d *dbDecider) Load(requestID int) (*models.UpdateRequest, error) {
@@ -395,7 +402,7 @@ func (d *dbDecider) Load(requestID int) (*models.UpdateRequest, error) {
 }
 
 func (d *dbDecider) Approve(req *models.UpdateRequest) error {
-	return requests.Approve(d.db, req)
+	return requests.ApproveWithVerifier(d.db, req, d.verify)
 }
 
 func (d *dbDecider) Decline(req *models.UpdateRequest) error {

@@ -15,12 +15,15 @@ import (
 	"strings"
 	"time"
 
+	"webring/internal/siteurl"
+
 	"github.com/PuerkitoBio/goquery"
 )
 
 const (
-	htmlTimeout = 5 * time.Second
-	dlTimeout   = 10 * time.Second
+	htmlTimeout     = 5 * time.Second
+	dlTimeout       = 10 * time.Second
+	maxFaviconBytes = 1 << 20
 )
 
 func GetAndStoreFavicon(siteURL, mediaFolder string, siteID int) (string, error) {
@@ -104,7 +107,8 @@ func getFaviconFromHTML(baseURL *url.URL) (*url.URL, error) {
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Upgrade-Insecure-Requests", "1")
 
-	client := &http.Client{}
+	client := siteurl.HTTPClient(htmlTimeout)
+	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -119,7 +123,7 @@ func getFaviconFromHTML(baseURL *url.URL) (*url.URL, error) {
 		return nil, fmt.Errorf("failed to fetch HTML: status code %d", resp.StatusCode)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	doc, err := goquery.NewDocumentFromReader(io.LimitReader(resp.Body, maxFaviconBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -177,6 +181,14 @@ func safeJoinUnder(base, name string) (string, error) {
 }
 
 func downloadFavicon(faviconURL, baseURL *url.URL, mediaFolder string, siteID int) (string, error) {
+	client := siteurl.HTTPClient(dlTimeout)
+	defer client.CloseIdleConnections()
+	return downloadFaviconWithClient(faviconURL, baseURL, mediaFolder, siteID, client)
+}
+
+func downloadFaviconWithClient(
+	faviconURL, baseURL *url.URL, mediaFolder string, siteID int, client *http.Client,
+) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), dlTimeout)
 	defer cancel()
 
@@ -194,7 +206,6 @@ func downloadFavicon(faviconURL, baseURL *url.URL, mediaFolder string, siteID in
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Referer", baseURL.String())
 
-	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -245,11 +256,15 @@ func downloadFavicon(faviconURL, baseURL *url.URL, mediaFolder string, siteID in
 		}
 	}()
 
-	if _, err = io.Copy(out, resp.Body); err != nil {
+	n, copyErr := io.Copy(out, io.LimitReader(resp.Body, maxFaviconBytes+1))
+	if copyErr != nil || n > maxFaviconBytes {
 		if rmErr := os.Remove(absPath); rmErr != nil {
 			log.Printf("Failed to remove partial file %q: %v", absPath, rmErr)
 		}
-		return "", err
+		if copyErr != nil {
+			return "", copyErr
+		}
+		return "", errors.New("favicon exceeds 1 MiB limit")
 	}
 
 	return fileName, nil

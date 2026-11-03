@@ -11,6 +11,7 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.11.2
+	golang.org/x/net v0.50.0
 	golang.org/x/oauth2 v0.36.0
 )
 
@@ -23,6 +24,6 @@ require (
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
-	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 )

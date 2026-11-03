@@ -15,6 +15,7 @@ import (
 	"webring/internal/blacklist"
 	"webring/internal/models"
 	"webring/internal/requests"
+	"webring/internal/siteurl"
 
 	"github.com/gorilla/mux"
 )
@@ -25,14 +26,6 @@ const maxFormBytes = 1 << 20 // 1 MiB
 
 func sanitizeInput(input string) string {
 	trimmed := strings.TrimSpace(input)
-	return html.EscapeString(trimmed)
-}
-
-func sanitizeURL(input string) string {
-	trimmed := strings.TrimSpace(input)
-	if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
-		trimmed = "https://" + trimmed
-	}
 	return html.EscapeString(trimmed)
 }
 
@@ -147,7 +140,7 @@ func createSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 
 		slug := sanitizeInput(r.FormValue("slug"))
 		name := sanitizeInput(r.FormValue("name"))
-		url := sanitizeURL(r.FormValue("url"))
+		url := strings.TrimSpace(r.FormValue("url"))
 
 		if slug == "" || name == "" || url == "" {
 			http.Error(w, "Slug, Name, and URL are required", http.StatusBadRequest)
@@ -168,6 +161,14 @@ func createSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "Invalid Slug", http.StatusBadRequest)
 			return
 		}
+
+		verifiedURL, verifyErr := siteurl.Verify(r.Context(), url)
+		if verifyErr != nil {
+			renderDashboardWithError(w, r, db, user,
+				"Invalid Site URL: "+verifyErr.Error(), http.StatusBadRequest)
+			return
+		}
+		url = verifiedURL
 
 		block, err := blacklist.Check(db, blacklist.UserSubjects(user), blacklist.SiteSubjects(slug, url))
 		if err != nil {
@@ -326,12 +327,22 @@ func updateSiteRequestHandler(db *sql.DB) http.HandlerFunc {
 			changedFields["name"] = newName
 		}
 
-		if newURL := sanitizeURL(r.FormValue("url")); newURL != "" && newURL != currentSite.URL {
-			if len(newURL) > 500 {
-				http.Error(w, "URL too long (max 500 characters)", http.StatusBadRequest)
+		if rawURL := strings.TrimSpace(r.FormValue("url")); rawURL != "" && rawURL != currentSite.URL {
+			normalized, parseErr := siteurl.Normalize(rawURL)
+			if parseErr != nil {
+				renderDashboardWithError(w, r, db, user,
+					"Invalid Site URL: "+parseErr.Error(), http.StatusBadRequest)
 				return
 			}
-			changedFields["url"] = newURL
+			if normalized != currentSite.URL {
+				verified, verifyErr := siteurl.Verify(r.Context(), normalized)
+				if verifyErr != nil {
+					renderDashboardWithError(w, r, db, user,
+						"Invalid Site URL: "+verifyErr.Error(), http.StatusBadRequest)
+					return
+				}
+				changedFields["url"] = verified
+			}
 		}
 
 		if len(changedFields) == 0 {

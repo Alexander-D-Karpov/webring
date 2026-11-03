@@ -18,6 +18,7 @@ import (
 	"webring/internal/blacklist"
 	"webring/internal/models"
 	"webring/internal/requests"
+	"webring/internal/siteurl"
 
 	"github.com/gorilla/mux"
 	"github.com/lib/pq"
@@ -52,11 +53,7 @@ func sanitizeInput(input string) string {
 }
 
 func sanitizeURL(input string) string {
-	trimmed := strings.TrimSpace(input)
-	if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
-		trimmed = "https://" + trimmed
-	}
-	return trimmed
+	return strings.TrimSpace(input)
 }
 
 func RegisterHandlers(r *mux.Router, db *sql.DB) {
@@ -204,6 +201,13 @@ func submitSiteHandler(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "Invalid Slug format", http.StatusBadRequest)
 			return
 		}
+
+		verifiedURL, verifyErr := siteurl.Verify(r.Context(), url)
+		if verifyErr != nil {
+			renderSubmitPage(w, r, "Invalid Site URL: "+verifyErr.Error(), http.StatusBadRequest)
+			return
+		}
+		url = verifiedURL
 
 		telegramUsernameClean := ""
 		if telegramUsername != "" {

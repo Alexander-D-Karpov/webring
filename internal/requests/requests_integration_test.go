@@ -1,6 +1,7 @@
 package requests
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -9,10 +10,17 @@ import (
 	"testing"
 	"time"
 
+	"webring/internal/models"
+
 	_ "github.com/lib/pq"
 )
 
 var uniqueSeq int64
+
+func approveOffline(db *sql.DB, req *models.UpdateRequest) error {
+	return ApproveWithVerifier(db, req,
+		func(_ context.Context, raw string) (string, error) { return raw, nil })
+}
 
 func nextUnique() int64 {
 	return time.Now().UnixNano()%1_000_000_000*1000 + atomic.AddInt64(&uniqueSeq, 1)
@@ -143,7 +151,7 @@ func TestApproveCreatesTheSiteAndRemovesTheRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if err = Approve(db, req); err != nil {
+	if err = approveOffline(db, req); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
 
@@ -179,7 +187,7 @@ func TestApproveLeavesTheRequestWhenApplyingFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if err = Approve(db, first); err != nil {
+	if err = approveOffline(db, first); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
 
@@ -199,7 +207,7 @@ func TestApproveLeavesTheRequestWhenApplyingFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if err = Approve(db, second); err == nil {
+	if err = approveOffline(db, second); err == nil {
 		t.Fatalf("Approve succeeded despite the slug already being taken")
 	}
 
@@ -225,7 +233,7 @@ func TestApproveUpdateChangesTheSite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if err = Approve(db, created); err != nil {
+	if err = approveOffline(db, created); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
 
@@ -247,7 +255,7 @@ func TestApproveUpdateChangesTheSite(t *testing.T) {
 	if update.Site == nil || update.Site.Slug != slug {
 		t.Errorf("Load did not attach the target site: %+v", update.Site)
 	}
-	if err = Approve(db, update); err != nil {
+	if err = approveOffline(db, update); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
 
@@ -291,5 +299,80 @@ func TestDeclineRemovesTheRequestWithoutTouchingSites(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("a declined request created %d sites", count)
+	}
+}
+
+func TestApprovalRechecksOldInvalidURL(t *testing.T) {
+	db := testDB(t)
+	userID := createUser(t, db)
+	slug := fmt.Sprintf("old-request-%d", nextUnique())
+	requestID, err := Create(db, userID, nil, "create", map[string]interface{}{
+		"slug": slug, "name": "Test Site", "url": "https://singlelabel",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, cleanupErr := db.Exec("DELETE FROM update_requests WHERE id = $1", requestID); cleanupErr != nil {
+			t.Errorf("cleaning up request: %v", cleanupErr)
+		}
+	})
+	req, err := Load(db, requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Approve(db, req); err == nil {
+		t.Fatal("approved an old request with an invalid URL")
+	}
+	if _, err := Load(db, requestID); err != nil {
+		t.Fatalf("rejected request was removed: %v", err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sites WHERE slug = $1", slug).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("invalid request created a site")
+	}
+}
+
+func TestApprovalRejectsInvalidUpdateBeforeWriting(t *testing.T) {
+	db := testDB(t)
+	userID := createUser(t, db)
+	slug := fmt.Sprintf("old-update-%d", nextUnique())
+	cleanupSite(t, db, slug)
+	var siteID int
+	if err := db.QueryRow(`INSERT INTO sites (slug, name, url, user_id, display_order)
+		VALUES ($1, 'Original', 'https://site.invalid', $2,
+		(SELECT COALESCE(MAX(display_order), 0) + 1 FROM sites)) RETURNING id`, slug, userID).Scan(&siteID); err != nil {
+		t.Fatal(err)
+	}
+	requestID, err := Create(db, userID, &siteID, "update", map[string]interface{}{
+		"name": "Changed", "url": "https://singlelabel",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, cleanupErr := db.Exec("DELETE FROM update_requests WHERE id = $1", requestID); cleanupErr != nil {
+			t.Errorf("cleaning up request: %v", cleanupErr)
+		}
+	})
+	req, err := Load(db, requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Approve(db, req); err == nil {
+		t.Fatal("approved an invalid URL update")
+	}
+	var name, storedURL string
+	if err := db.QueryRow("SELECT name, url FROM sites WHERE id = $1", siteID).Scan(&name, &storedURL); err != nil {
+		t.Fatal(err)
+	}
+	if name != "Original" || storedURL != "https://site.invalid" {
+		t.Fatalf("invalid update changed site: %q %q", name, storedURL)
+	}
+	if _, err := Load(db, requestID); err != nil {
+		t.Fatalf("rejected request was removed: %v", err)
 	}
 }

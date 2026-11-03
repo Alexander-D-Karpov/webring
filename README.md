@@ -87,6 +87,23 @@ tests require `TEST_DB_CONNECTION_STRING` pointing to a **dedicated test databas
 all migrations applied. Some tests truncate tables, so never point them at a development or
 production database. Browser-based ring checks require Chromium on `PATH` or `CHROME_PATH`.
 
+## Site URL validation
+
+Submissions, user and admin edits, and approvals of requests that add or change a site URL
+require an HTTP or HTTPS URL under a public domain. The server checks that DNS returns only
+public addresses and that the site responds with an HTTP 2xx status. IP literals, local
+addresses, unknown top-level domains, non-default ports, and unsafe redirects are rejected.
+Approval repeats the check, including for requests created before this validation existed;
+an invalid request remains pending for an admin to review or reject. Unchanged URLs on
+existing sites do not prevent unrelated edits.
+
+The validator and favicon downloader check each connection and do not use environment
+proxies. DNS changes or redirects to non-public addresses are rejected. A reachable domain
+does not prove that a submitter owns it, and temporarily unavailable sites or sites that
+block automated requests may fail validation. The uptime checker and Chromium ring checker
+use separate network paths; isolate those workers from internal services and metadata
+endpoints independently.
+
 ## Customizing Notification Messages
 
 Telegram notification templates live in the `messages/` directory (configurable via `MESSAGES_DIR` env var). 

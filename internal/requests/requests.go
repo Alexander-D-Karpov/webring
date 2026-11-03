@@ -6,6 +6,7 @@
 package requests
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"webring/internal/blacklist"
 	"webring/internal/favicon"
 	"webring/internal/models"
+	"webring/internal/siteurl"
 	"webring/internal/telegram"
 )
 
@@ -111,10 +113,37 @@ func Delete(db *sql.DB, requestID int) error {
 	return err
 }
 
+// URLVerifier lets integration tests exercise approval without public DNS or HTTP.
+type URLVerifier func(context.Context, string) (string, error)
+
 // Apply writes a request's changes into the sites table without removing the request.
 func Apply(db *sql.DB, req *models.UpdateRequest) error {
+	return applyWithVerifier(db, req, siteurl.Verify)
+}
+
+func applyWithVerifier(db *sql.DB, req *models.UpdateRequest, verify URLVerifier) error {
 	if req.RequestType == "create" {
+		raw, ok := req.ChangedFields["url"].(string)
+		if !ok {
+			return errors.New("missing or invalid URL")
+		}
+		verified, err := verify(context.Background(), raw)
+		if err != nil {
+			return fmt.Errorf("site URL verification failed: %w", err)
+		}
+		req.ChangedFields["url"] = verified
 		return applyCreate(db, req)
+	}
+	if raw, found := req.ChangedFields["url"]; found {
+		urlText, ok := raw.(string)
+		if !ok {
+			return errors.New("invalid URL field")
+		}
+		verified, err := verify(context.Background(), urlText)
+		if err != nil {
+			return fmt.Errorf("site URL verification failed: %w", err)
+		}
+		req.ChangedFields["url"] = verified
 	}
 	return applyUpdate(db, req)
 }
@@ -122,7 +151,12 @@ func Apply(db *sql.DB, req *models.UpdateRequest) error {
 // Approve applies a request, removes it, and notifies the submitter. The request row is
 // left in place when applying fails so the caller can report the problem and retry.
 func Approve(db *sql.DB, req *models.UpdateRequest) error {
-	if err := Apply(db, req); err != nil {
+	return ApproveWithVerifier(db, req, siteurl.Verify)
+}
+
+// ApproveWithVerifier permits deterministic offline integration tests.
+func ApproveWithVerifier(db *sql.DB, req *models.UpdateRequest, verify URLVerifier) error {
+	if err := applyWithVerifier(db, req, verify); err != nil {
 		return err
 	}
 

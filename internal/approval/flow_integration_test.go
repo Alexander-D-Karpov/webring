@@ -34,7 +34,8 @@ func newFlowFixture(t *testing.T, requestType string) *flowFixture {
 	db := testDB(t)
 	bot := newFakeBot()
 	bot.nextPollID = fmt.Sprintf("flow-poll-%d", nextUnique())
-	manager := NewManager(NewStore(db), bot, NewDecider(db), -1001)
+	manager := NewManager(NewStore(db), bot, NewDeciderWithVerifier(db,
+		func(_ context.Context, raw string) (string, error) { return raw, nil }), -1001)
 
 	f := &flowFixture{db: db, bot: bot, manager: manager, slug: fmt.Sprintf("flow-%d", nextUnique())}
 
@@ -201,6 +202,36 @@ func TestFourVotesCreateTheSiteEndToEnd(t *testing.T) {
 		if strings.Contains(announcement, name) {
 			t.Errorf("announcement lists non-voter %s:\n%s", name, announcement)
 		}
+	}
+}
+
+func TestVotesCannotApproveOldInvalidURL(t *testing.T) {
+	f := newFlowFixture(t, "create")
+	f.cleanupSite(t)
+	// Use the production decider. The reserved test TLD fails without public DNS.
+	f.manager.decider = NewDecider(f.db)
+	for i := 0; i < 3; i++ {
+		f.vote(t, i, telegram.OptionApprove)
+	}
+	err := f.manager.HandlePollAnswer(context.Background(), &telegram.PollAnswer{
+		PollID: f.poll.PollID, User: &telegram.APIUser{ID: f.adminTelegramIDs[3]},
+		OptionIDs: []int{telegram.OptionApprove},
+	})
+	if err == nil {
+		t.Fatal("vote approved an invalid site")
+	}
+	var count int
+	if err := f.db.QueryRow("SELECT COUNT(*) FROM sites WHERE slug = $1", f.slug).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("vote created an invalid site")
+	}
+	if _, err := requests.Load(f.db, f.requestID); err != nil {
+		t.Fatalf("request was removed after failed approval: %v", err)
+	}
+	if got := f.pollStatus(t); got != StatusCanceled {
+		t.Fatalf("poll status = %q, want canceled", got)
 	}
 }
 

@@ -19,12 +19,20 @@ type ChangeEntry struct {
 }
 
 type Mention struct {
-	Name   string
-	UserID int64
+	Name     string
+	UserID   int64
+	Username string
 }
 
 func (m Mention) String() string {
-	return fmt.Sprintf("[%s](tg://user?id=%d)", EscapeMarkdownV2(m.Name), m.UserID)
+	text := EscapeMarkdownV2(m.Name)
+	if m.UserID != 0 {
+		text = fmt.Sprintf("[%s](tg://user?id=%d)", text, m.UserID)
+	}
+	if m.Username != "" && m.Name != "@"+m.Username {
+		text += " @" + EscapeMarkdownV2(m.Username)
+	}
+	return text
 }
 
 var (

@@ -193,3 +193,34 @@ func TestUnknownTemplateRendersEmpty(t *testing.T) {
 		t.Errorf("unknown template rendered %q", got)
 	}
 }
+
+func TestMentionLinksProfileAndShowsUsername(t *testing.T) {
+	cases := []struct {
+		mention Mention
+		want    string
+	}{
+		{Mention{Name: "Jane Doe", UserID: 42, Username: "jane_d"}, `[Jane Doe](tg://user?id=42) @jane\_d`},
+		{Mention{Name: "@jane_d", UserID: 42, Username: "jane_d"}, `[@jane\_d](tg://user?id=42)`},
+		{Mention{Name: "Jane.", UserID: 42}, `[Jane\.](tg://user?id=42)`},
+		{Mention{Name: "Jane", Username: "jane"}, `Jane @jane`},
+		{Mention{Name: "Unknown User"}, `Unknown User`},
+	}
+	for _, c := range cases {
+		if got := c.mention.String(); got != c.want {
+			t.Errorf("%+v rendered %q, want %q", c.mention, got, c.want)
+		}
+	}
+}
+
+func TestNewRequestShowsUserAsMention(t *testing.T) {
+	text := RenderMessage("new_request_create", map[string]interface{}{
+		"UserName": Mention{Name: "Jane", UserID: 7, Username: "jane"},
+		"Slug":     "jane",
+		"SiteName": "Jane",
+		"URL":      "https://jane.example",
+		"Date":     "now",
+	})
+	if !strings.Contains(text, "*User:* [Jane](tg://user?id=7) @jane") {
+		t.Errorf("user is not a profile link:\n%s", text)
+	}
+}

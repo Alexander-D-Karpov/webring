@@ -76,6 +76,17 @@ func ResolveUserName(user *models.User) string {
 	return "Unknown User"
 }
 
+func UserMention(user *models.User) Mention {
+	mention := Mention{Name: ResolveUserName(user)}
+	if user != nil {
+		mention.UserID = user.TelegramID
+		if user.TelegramUsername != nil {
+			mention.Username = *user.TelegramUsername
+		}
+	}
+	return mention
+}
+
 func fieldStr(fields map[string]interface{}, key string) string {
 	if v, ok := fields[key].(string); ok {
 		return v
@@ -155,7 +166,7 @@ func AdminTelegramIDs(db *sql.DB) ([]int64, error) {
 
 // FormatRequestMessage renders the "a new request arrived" text shown to admins.
 func FormatRequestMessage(request *models.UpdateRequest, user *models.User) string {
-	userName := ResolveUserName(user)
+	userName := UserMention(user)
 	date := request.CreatedAt.Format("15:04 02.01.2006")
 
 	switch request.RequestType {
@@ -286,15 +297,10 @@ func NotifyAdminsOfAction(db *sql.DB, action string, request *models.UpdateReque
 func formatAdminActionMessage(action string, request *models.UpdateRequest, performedBy *models.User) string {
 	adminName := ResolveUserName(performedBy)
 
-	userName := "Unknown User"
-	if request.User != nil {
-		userName = ResolveUserName(request.User)
-	}
-
 	tmplName := fmt.Sprintf("admin_%s_%s", action, request.RequestType)
 	data := map[string]interface{}{
 		"AdminName": adminName,
-		"UserName":  userName,
+		"UserName":  UserMention(request.User),
 		"SiteName":  RequestSiteName(request),
 	}
 

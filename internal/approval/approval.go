@@ -460,7 +460,7 @@ func (m *Manager) announce(ctx context.Context, poll *Poll, req *models.UpdateRe
 
 	text := telegram.RenderMessage(template, map[string]interface{}{
 		"SiteName": telegram.RequestSiteName(req),
-		"UserName": telegram.ResolveUserName(req.User),
+		"UserName": telegram.UserMention(req.User),
 		"Voters":   voters,
 	})
 	if text == "" {

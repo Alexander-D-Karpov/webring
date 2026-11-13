@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -25,9 +26,11 @@ type TelegramUser struct {
 }
 
 type TelegramLogin struct {
-	oauth    oauth2.Config
-	verifier *oidc.IDTokenVerifier
-	client   *http.Client
+	oauth           oauth2.Config
+	verifier        *oidc.IDTokenVerifier
+	client          *http.Client
+	redirectURLs    map[string]string
+	redirectInvalid bool
 }
 
 func NewTelegramLogin() *TelegramLogin {
@@ -35,7 +38,7 @@ func NewTelegramLogin() *TelegramLogin {
 	client := &http.Client{Timeout: 8 * time.Second}
 	ctx := oidc.ClientContext(context.Background(), client)
 	keys := oidc.NewRemoteKeySet(ctx, telegramIssuer+"/.well-known/jwks.json")
-	return &TelegramLogin{
+	login := &TelegramLogin{
 		client: client,
 		verifier: oidc.NewVerifier(telegramIssuer, keys, &oidc.Config{
 			ClientID: id, SupportedSigningAlgs: []string{oidc.RS256},
@@ -50,6 +53,47 @@ func NewTelegramLogin() *TelegramLogin {
 			},
 		},
 	}
+	if additional := strings.TrimSpace(os.Getenv("TELEGRAM_OIDC_ADDITIONAL_REDIRECT_URLS")); additional != "" {
+		var err error
+		login.redirectURLs, err = telegramRedirectURLs(login.oauth.RedirectURL, additional)
+		login.redirectInvalid = err != nil
+	}
+	return login
+}
+
+// telegramRedirectURLs restricts multi-host login to explicit HTTPS callbacks.
+func telegramRedirectURLs(primary, additional string) (map[string]string, error) {
+	redirects := make(map[string]string)
+	for _, raw := range append([]string{primary}, strings.Split(additional, ",")...) {
+		raw = strings.TrimSpace(raw)
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil ||
+			parsed.Opaque != "" || parsed.Path != "/auth/telegram" || parsed.RawPath != "" ||
+			parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(raw, "#") {
+			return nil, errors.New("invalid Telegram redirect URL configuration")
+		}
+		host := strings.ToLower(parsed.Host)
+		if existing, ok := redirects[host]; ok && existing != raw {
+			return nil, errors.New("conflicting Telegram redirect URLs for host")
+		}
+		redirects[host] = raw
+	}
+	return redirects, nil
+}
+
+func (l *TelegramLogin) oauthForHost(host string) (oauth2.Config, bool) {
+	if l.redirectInvalid {
+		return oauth2.Config{}, false
+	}
+	config := l.oauth
+	if l.redirectURLs != nil {
+		redirect, ok := l.redirectURLs[strings.ToLower(host)]
+		if !ok {
+			return oauth2.Config{}, false
+		}
+		config.RedirectURL = redirect
+	}
+	return config, true
 }
 
 func flowCookie(state, value string, maxAge int) *http.Cookie {
@@ -61,13 +105,22 @@ func flowCookie(state, value string, maxAge int) *http.Cookie {
 
 func (l *TelegramLogin) Start(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if l.oauth.ClientID == "" || l.oauth.ClientSecret == "" || l.oauth.RedirectURL == "" {
+	if l.redirectInvalid {
+		http.Error(w, "Invalid Telegram redirect URL configuration", http.StatusServiceUnavailable)
+		return
+	}
+	oauth, ok := l.oauthForHost(r.Host)
+	if !ok {
+		http.Error(w, "Telegram login is not configured for this host", http.StatusServiceUnavailable)
+		return
+	}
+	if oauth.ClientID == "" || oauth.ClientSecret == "" || oauth.RedirectURL == "" {
 		http.Error(w, "Telegram login is not configured", http.StatusServiceUnavailable)
 		return
 	}
 	state, nonce, verifier := rand.Text(), rand.Text(), oauth2.GenerateVerifier()
 	http.SetCookie(w, flowCookie(state, nonce+"."+verifier, 600))
-	target := l.oauth.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
+	target := oauth.AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier))
 	http.Redirect(w, r, target, http.StatusSeeOther)
 }
 
@@ -75,6 +128,10 @@ func (l *TelegramLogin) User(w http.ResponseWriter, r *http.Request) (*TelegramU
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 
+	oauth, ok := l.oauthForHost(r.Host)
+	if !ok {
+		return nil, errors.New("telegram login is not configured for this host")
+	}
 	q := r.URL.Query()
 	state := q.Get("state")
 	cookie, err := r.Cookie("__Host-webring-tg-" + state)
@@ -88,8 +145,8 @@ func (l *TelegramLogin) User(w http.ResponseWriter, r *http.Request) (*TelegramU
 	}
 
 	ctx := oidc.ClientContext(r.Context(), l.client)
-	tokens, err := l.oauth.Exchange(ctx, q.Get("code"),
-		oauth2.VerifierOption(verifier), oauth2.SetAuthURLParam("client_id", l.oauth.ClientID))
+	tokens, err := oauth.Exchange(ctx, q.Get("code"),
+		oauth2.VerifierOption(verifier), oauth2.SetAuthURLParam("client_id", oauth.ClientID))
 	if err != nil {
 		return nil, errors.New("failed to exchange Telegram authorization code")
 	}

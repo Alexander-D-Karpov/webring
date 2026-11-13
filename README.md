@@ -80,6 +80,21 @@ The callback and login cookies require HTTPS. To test login locally, use a regis
 URL that reaches the local server. A server without the three OIDC settings responds with
 `503` when login is started; configure them before deploying to avoid interrupting login.
 
+For login on multiple domains, register each exact callback URL and trusted origin in
+BotFather, then keep the primary callback in `TELEGRAM_OIDC_REDIRECT_URL` and add the
+others as a comma-separated list:
+
+```dotenv
+TELEGRAM_OIDC_REDIRECT_URL=https://ring.example/auth/telegram
+TELEGRAM_OIDC_ADDITIONAL_REDIRECT_URLS=https://mirror.example/auth/telegram
+```
+
+The server chooses a configured callback by the request's `Host` header. A reverse proxy
+must preserve the original host, and all callbacks must use HTTPS with the path
+`/auth/telegram`. Unknown hosts are rejected. Login flow and session cookies remain
+host-only, so users sign in separately on each domain; instances must share the same
+database if they are meant to show the same accounts and sites.
+
 ## Tests
 
 Run `go test -p 1 ./...` and `go build ./cmd/server ./cmd/ringcheck`. Database integration

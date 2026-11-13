@@ -210,6 +210,7 @@ func TestTelegramLoginPreservesSiteOwnership(t *testing.T) {
 	t.Setenv("TELEGRAM_OIDC_CLIENT_ID", integrationClientID)
 	t.Setenv("TELEGRAM_OIDC_CLIENT_SECRET", integrationSecret)
 	t.Setenv("TELEGRAM_OIDC_REDIRECT_URL", integrationRedirect)
+	t.Setenv("TELEGRAM_OIDC_ADDITIONAL_REDIRECT_URLS", "")
 	t.Setenv("CSRF_AUTH_KEY", strings.Repeat("c", 32))
 	t.Setenv("CSRF_SECURE", "true")
 	t.Setenv("SESSION_SECURE_COOKIE", "true")

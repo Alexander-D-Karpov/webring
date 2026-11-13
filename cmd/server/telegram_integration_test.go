@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -89,7 +90,7 @@ func (p *integrationTelegram) RoundTrip(r *http.Request) (*http.Response, error)
 	}, nil
 }
 
-func (p *integrationTelegram) issue(t *testing.T, code string, q url.Values, id int64, username string) {
+func (p *integrationTelegram) issue(t *testing.T, code string, q url.Values, id any, username string) {
 	t.Helper()
 	header, err := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT", "kid": "integration-key"})
 	if err != nil {
@@ -255,11 +256,15 @@ func TestTelegramLoginPreservesSiteOwnership(t *testing.T) {
 		name        string
 		admin       bool
 		placeholder bool
+		stringID    bool
 		destination string
 	}{
-		{"existing user", false, false, "/user"},
-		{"existing admin", true, false, "/admin/requests"},
-		{"username placeholder", false, true, "/user"},
+		{name: "existing user with numeric ID", destination: "/user"},
+		{name: "existing user with string ID", stringID: true, destination: "/user"},
+		{name: "existing admin with numeric ID", admin: true, destination: "/admin/requests"},
+		{name: "existing admin with string ID", admin: true, stringID: true, destination: "/admin/requests"},
+		{name: "username placeholder with numeric ID", placeholder: true, destination: "/user"},
+		{name: "username placeholder with string ID", placeholder: true, stringID: true, destination: "/user"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			id := time.Now().UnixNano()%1_000_000_000_000 + int64(i)
@@ -294,7 +299,11 @@ func TestTelegramLoginPreservesSiteOwnership(t *testing.T) {
 			browser := integrationBrowser(t, app)
 			query := startIntegrationLogin(t, browser, app.URL)
 			code := fmt.Sprintf("integration-code-%d", id)
-			provider.issue(t, code, query, id, strings.ToUpper(username))
+			var claimID any = id
+			if tc.stringID {
+				claimID = strconv.FormatInt(id, 10)
+			}
+			provider.issue(t, code, query, claimID, strings.ToUpper(username))
 			callback := url.Values{"state": {query.Get("state")}, "code": {code}}
 			res, err := browser.Get(app.URL + "/auth/telegram?" + callback.Encode())
 			if err != nil {

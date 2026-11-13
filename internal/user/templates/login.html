@@ -20,10 +20,11 @@
     <div style="text-align: center; margin: 2rem 0;">
         <p>Login with your Telegram account to Manage your websites in the webring.</p>
 
-        <form method="post" action="/auth/telegram/start">
+        <form class="telegram-login-form" method="post" action="/auth/telegram/start">
             {{csrfField .}}
-            <button type="submit" class="action-card action-card-primary" style="display: inline-flex">
-                <i class="ri-telegram-fill" aria-hidden="true"></i> Log in with Telegram
+            <button type="submit" class="telegram-login-button">
+                <i class="ri-telegram-fill" aria-hidden="true"></i>
+                <span>Log in with Telegram</span>
             </button>
         </form>
 

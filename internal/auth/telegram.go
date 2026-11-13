@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -100,10 +101,22 @@ func (l *TelegramLogin) User(w http.ResponseWriter, r *http.Request) (*TelegramU
 	if err != nil || token.Nonce != nonce || token.Subject == "" {
 		return nil, errors.New("invalid Telegram ID token")
 	}
-	var user TelegramUser
-	if err := token.Claims(&user); err != nil || user.ID <= 0 {
+	var claims struct {
+		TelegramUser
+		ID json.Number `json:"id"`
+	}
+	if err = token.Claims(&claims); err != nil {
 		return nil, errors.New("missing or invalid Telegram profile ID")
 	}
+	// Telegram may encode the profile ID as either a JSON number or a decimal
+	// string. Only the verified profile ID, not the OIDC subject, identifies an
+	// existing Telegram account.
+	id, err := claims.ID.Int64()
+	if err != nil || id <= 0 {
+		return nil, errors.New("missing or invalid Telegram profile ID")
+	}
+	user := claims.TelegramUser
+	user.ID = id
 	if user.FirstName == "" {
 		user.FirstName = user.Name
 	}

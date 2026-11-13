@@ -228,7 +228,9 @@ func TestTelegramLoginParallelFlowsAndReplay(t *testing.T) {
 	if first.query.Get("state") == second.query.Get("state") || first.query.Get("nonce") == second.query.Get("nonce") {
 		t.Fatal("parallel login flows reused state or nonce")
 	}
-	p.issue(t, "code-1", first, validClaims(p, first), nil)
+	stringIDClaims := validClaims(p, first)
+	stringIDClaims["id"] = "12345"
+	p.issue(t, "code-1", first, stringIDClaims, nil)
 	p.issue(t, "code-2", second, validClaims(p, second), nil)
 	for _, item := range []struct {
 		flow testFlow
@@ -259,14 +261,19 @@ func TestTelegramLoginRejectsInvalidIDTokens(t *testing.T) {
 		key    *rsa.PrivateKey
 	}{
 		{name: "bad signature", key: wrongKey},
+		{name: "bad signature with string ID", key: wrongKey, mutate: func(c map[string]any) { c["id"] = "12345" }},
 		{name: "wrong issuer", mutate: func(c map[string]any) { c["iss"] = "https://wrong.example" }},
 		{name: "wrong audience", mutate: func(c map[string]any) { c["aud"] = "another-client" }},
 		{name: "wrong nonce", mutate: func(c map[string]any) { c["nonce"] = "wrong" }},
 		{name: "expired", mutate: func(c map[string]any) { c["exp"] = time.Now().Add(-time.Hour).Unix() }},
 		{name: "missing subject", mutate: func(c map[string]any) { delete(c, "sub") }},
-		{name: "missing numeric ID", mutate: func(c map[string]any) { delete(c, "id") }},
+		{name: "missing profile ID", mutate: func(c map[string]any) { delete(c, "id") }},
 		{name: "zero ID", mutate: func(c map[string]any) { c["id"] = 0 }},
-		{name: "string ID", mutate: func(c map[string]any) { c["id"] = "12345" }},
+		{name: "negative string ID", mutate: func(c map[string]any) { c["id"] = "-1" }},
+		{name: "non-numeric string ID", mutate: func(c map[string]any) { c["id"] = "not-an-id" }},
+		{name: "boolean ID", mutate: func(c map[string]any) { c["id"] = true }},
+		{name: "fractional string ID", mutate: func(c map[string]any) { c["id"] = "1.5" }},
+		{name: "overflow string ID", mutate: func(c map[string]any) { c["id"] = "9223372036854775808" }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
